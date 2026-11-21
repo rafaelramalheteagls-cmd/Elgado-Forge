@@ -1,0 +1,58 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --bg-canvas: #0B0D10;
+    --bg-surface: #12161C;
+    --bg-elevated: #171C24;
+    --border-steel: rgba(255, 255, 255, 0.09);
+    --border-steel-strong: rgba(255, 255, 255, 0.16);
+    --text-primary: #ECEFF4;
+    --text-secondary: #98A2B3;
+    --text-muted: #667085;
+    --accent-gold: #D4A853;
+    --accent-gold-hover: #E1BA6B;
+  }
+
+  html {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    color-scheme: dark;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Outfit', system-ui, sans-serif;
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+  }
+
+  .font-mono-tabular {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subtle dark smithy scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0B0D10;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #232A35;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #333D4D;
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Elgado Forge",
+  "description": "Monster Hunter Rise: Sunbreak Steam build workbench with EFR/EFE damage math, skill filters, automatic set comparison, monster DPS training simulator, rank-aware meta recommendations, and Steam progression sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,475 @@
+import { ArmorItem, DecorationItem, RankTier, WeaponItem } from '../types/sunbreak';
+import { ARMOR_DB } from './armorCatalog';
+import { DECORATIONS_DB } from './skillsAndDecos';
+import { WEAPONS_DB } from './weaponCatalog';
+
+export interface SunbreakMaterialMeta {
+  name: string;
+  source: string;
+  rankTier: RankTier;
+  category: 'Monster Part' | 'Anomaly' | 'Ore & Jewel' | 'Bone & Bug' | 'Ticket & Coin';
+}
+
+export const MATERIALS_CATALOG: SunbreakMaterialMeta[] = [
+  // =========================================================================
+  // 1. ENDGAME & TITLE UPDATE ELDER / RARE MATERIALS
+  // =========================================================================
+  { name: 'Primordial Bloodstone', source: 'Primordial Malzeno (Rare)', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Silver-rimmed Shard', source: 'Primordial Malzeno', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Primordial Cortex', source: 'Primordial Malzeno', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Primordial Fellwing', source: 'Primordial Malzeno', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Risen Dragonbone', source: 'Risen Elder Dragons (MR 110+)', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Large Elder Dragon Gem', source: 'MR Elder Dragons (Rare)', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Teostra Hellfire', source: 'MR Teostra / Risen Teostra', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Teostra Fellwing', source: 'MR Teostra', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Teostra Cortex', source: 'MR Teostra', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Teostra Lash', source: 'MR Teostra', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Kushala Daora Hardhorn', source: 'MR Kushala / Risen Kushala', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Kushala Daora Cortex', source: 'MR Kushala Daora', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Kushala Daora Fellwing', source: 'MR Kushala Daora', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Chameleos Fellwing', source: 'MR Chameleos / Risen Chameleos', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Chameleos Cortex', source: 'MR Chameleos', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Chameleos Hardhorn', source: 'MR Chameleos', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'S.Magala Mantle', source: 'MR Shagaru / Risen Shagaru', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'S.Magala Cortex', source: 'MR Shagaru Magala', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'S.Magala Hardhorn', source: 'MR Shagaru Magala', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Valstrax Ruby+', source: 'MR Crimson Glow Valstrax / Risen Valstrax', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Valstrax Cortex', source: 'MR Crimson Glow Valstrax', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Gleaming Shell', source: 'Risen Crimson Glow Valstrax', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Contrary Scale', source: 'Chaotic Gore Magala (Rare)', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Chaotic Gore Cortex', source: 'Chaotic Gore Magala', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Gore Magala Mantle', source: 'MR Gore Magala / Chaotic Gore', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Gore Magala Cortex', source: 'MR Gore Magala', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Gore Magala Ripclaw+', source: 'MR Gore Magala', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Velkhana Fellwing', source: 'Velkhana', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Velkhana Cortex', source: 'Velkhana', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Crystal Shard', source: 'Velkhana (Rare)', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Heavenly Dragongem', source: 'Amatsu (Rare)', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Stormsoul Hardhorn', source: 'Amatsu', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Amatsu Cortex', source: 'Amatsu', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Amatsu Patagium', source: 'Amatsu', rankTier: 'Endgame AR', category: 'Monster Part' },
+  { name: 'Abyssal Dragonspire', source: 'Gaismagorm (Rare)', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Gaismagorm Mantle', source: 'Gaismagorm', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Gaismagorm Heavyplate', source: 'Gaismagorm', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Malzeno Bloodstone', source: 'MR Malzeno', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Malzeno Cortex', source: 'MR Malzeno', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Malzeno Fellwing', source: 'MR Malzeno', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Orb of Origin+', source: 'Narwa the Allmother / Ibushi', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Allmother Mantle', source: 'MR Narwa the Allmother', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Ibushi Windsac+', source: 'MR Wind Serpent Ibushi', rankTier: 'MR 10+', category: 'Monster Part' },
+
+  // =========================================================================
+  // 2. MASTER RANK MONSTER PARTS (EARLY MR -> MR 10+)
+  // =========================================================================
+  { name: 'Flaming Mantle', source: 'Flaming Espinas (Rare)', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Flaming Espinas Cortex', source: 'Flaming Espinas', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Espinas Mantle', source: 'MR Espinas', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Espinas Hardhorn', source: 'MR Espinas / Flaming Espinas', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Espinas Cortex', source: 'MR Espinas', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Silver Rathalos Lash', source: 'Silver Rathalos', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Silver Rathalos Cortex', source: 'Silver Rathalos', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Gold Rathian Cortex', source: 'Gold Rathian', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Gold Rathian Lash', source: 'Gold Rathian', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Rathalos Mantle', source: 'MR Rathalos / Silver Rathalos', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Rathalos Cortex', source: 'MR Rathalos', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Rathalos Fellwing', source: 'MR Rathalos', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Rathian Mantle', source: 'MR Rathian / Gold Rathian', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Rathian Cortex', source: 'MR Rathian', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Moonlight Cortex', source: 'Lucent Nargacuga', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Cloudy Moonshard', source: 'Lucent Nargacuga (Rare)', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Nargacuga Mantle', source: 'MR Nargacuga', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Nargacuga Blackfur+', source: 'MR Nargacuga', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Nargacuga Cutwing+', source: 'MR Nargacuga', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Violet Mizutsune Scale+', source: 'Violet Mizutsune', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Violet Mizutsune Claws', source: 'Violet Mizutsune', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Mizutsune Mantle', source: 'MR Mizutsune / Violet Mizutsune', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Mizutsune Purplefur+', source: 'MR Mizutsune', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Bazelgeuse Mantle', source: 'MR Bazelgeuse / Seething Bazelgeuse', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Seething Scale', source: 'Seething Bazelgeuse', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Seething Cortex', source: 'Seething Bazelgeuse', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Magnamalo Orb', source: 'Scorned Magnamalo / MR Magnamalo', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Scorned Blade+', source: 'Scorned Magnamalo', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Magnamalo Cortex', source: 'MR Magnamalo', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Lunagaron Frost Jewel', source: 'MR Lunagaron (Rare)', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Lunagaron Cortex', source: 'MR Lunagaron', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Lunagaron Hardfang', source: 'MR Lunagaron', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Garangolm Hardplate', source: 'MR Garangolm', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Garangolm Cortex', source: 'MR Garangolm', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Astalos Mantle', source: 'MR Astalos (Rare)', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Astalos Cortex', source: 'MR Astalos', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Seregios Lens', source: 'MR Seregios (Rare)', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Seregios Slavescale+', source: 'MR Seregios', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Zinogre Skymerald', source: 'MR Zinogre (Rare)', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Zinogre Cortex', source: 'MR Zinogre', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Zinogre Deathly Shocker', source: 'MR Zinogre', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Tigrex Mantle', source: 'MR Tigrex (Rare)', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Tigrex Cortex', source: 'MR Tigrex', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Diablos Hardhorn', source: 'MR Diablos', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Diablos Cortex', source: 'MR Diablos', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Barioth Thickfur', source: 'MR Barioth', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Barioth Hardclaw', source: 'MR Barioth', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Goss Harag Bile', source: 'MR Goss Harag (Rare)', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Goss Harag Heavyfur', source: 'MR Goss Harag', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Almudron Mantle', source: 'MR Almudron / Magma Almudron', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Magma Almudron Cortex', source: 'Magma Almudron', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Rakna-Kadaki Cortex', source: 'MR Rakna-Kadaki / Pyre Rakna', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Pyre-Kadaki Glowgut', source: 'Pyre Rakna-Kadaki', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Aurora Somnacanth Fin+', source: 'MR Aurora Somnacanth', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Anjanath Mantle', source: 'MR Anjanath (Rare)', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Anjanath Shard', source: 'MR Anjanath', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Hermitaur Cortex', source: 'MR Daimyo Hermitaur', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Ceanataur Cortex', source: 'MR Shogun Ceanataur', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Furious Rajang Heart', source: 'MR Rajang / Furious Rajang', rankTier: 'MR 10+', category: 'Monster Part' },
+  { name: 'Rajang Wildpelt', source: 'MR Rajang', rankTier: 'Story MR', category: 'Monster Part' },
+  { name: 'Velociprey Thickhide', source: 'MR Velociprey / Velocidrome Quests', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Great Izuchi Thickhide', source: 'MR Great Izuchi', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Bishaten Thickfur', source: 'MR Bishaten / Blood Orange Bishaten', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Barroth Cortex', source: 'MR Barroth', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Tobi-Kadachi Thickfur', source: 'MR Tobi-Kadachi', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Lagombi Thickfur', source: 'MR Lagombi', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Wroggi Thickhide', source: 'MR Great Wroggi', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Ludroth Cortex', source: 'MR Royal Ludroth', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Pukei-Pukei Cortex', source: 'MR Pukei-Pukei', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Khezu Pearlhide', source: 'MR Khezu', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Basarios Cortex', source: 'MR Basarios', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Tetranadon Thickhide', source: 'MR Tetranadon', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Aknosom Shard', source: 'MR Aknosom', rankTier: 'Early MR', category: 'Monster Part' },
+  { name: 'Jyuratodus Cortex', source: 'MR Jyuratodus', rankTier: 'Early MR', category: 'Monster Part' },
+
+  // =========================================================================
+  // 3. HIGH RANK BASE RISE MONSTER PARTS
+  // =========================================================================
+  { name: 'Rathalos Ruby', source: 'HR Rathalos (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Rathalos Carapace', source: 'HR Rathalos', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Rathalos Scale+', source: 'HR Rathalos', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Rathian Ruby', source: 'HR Rathian (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Rathian Carapace', source: 'HR Rathian', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Nargacuga Medulla', source: 'HR Nargacuga (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Nargacuga Pelt+', source: 'HR Nargacuga', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Nargacuga Razor', source: 'HR Nargacuga', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Anjanath Gem', source: 'HR Anjanath (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Anjanath Scale+', source: 'HR Anjanath', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Anjanath Fang+', source: 'HR Anjanath', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Zinogre Jasper', source: 'HR Zinogre (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Zinogre Carapace', source: 'HR Zinogre', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Magnamalo Plate', source: 'HR Magnamalo (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Purple Magna Gem', source: 'HR Magnamalo (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Tigrex Maw', source: 'HR Tigrex (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Diablos Carapace', source: 'HR Diablos', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Mizutsune Water Orb', source: 'HR Mizutsune (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Almudron Golden Orb', source: 'HR Almudron (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Teostra Gem', source: 'HR Teostra (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Daora Gem', source: 'HR Kushala Daora (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Chameleos Gem', source: 'HR Chameleos (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Red Dragon Spire', source: 'HR Crimson Glow Valstrax', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Valstrax Scale+', source: 'HR Crimson Glow Valstrax', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Rajang Nerve', source: 'HR Rajang', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Bazelgeuse Gem', source: 'HR Bazelgeuse (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Orb of Origin', source: 'HR Narwa / Ibushi (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Beast Gem', source: 'HR Goss Harag / Arzuros / Lagombi', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Wyvern Gem', source: 'HR Large Wyverns (Rare)', rankTier: 'HR', category: 'Monster Part' },
+  { name: 'Bird Wyvern Gem', source: 'HR Bird Wyverns (Rare)', rankTier: 'HR', category: 'Monster Part' },
+
+  // =========================================================================
+  // 4. ANOMALY & AFFLICTED MATERIALS (A1 -> A9 / AR 1–300)
+  // =========================================================================
+  { name: 'Afflicted Bone', source: 'Anomaly Quests (A1–A3)', rankTier: 'MR 10+', category: 'Anomaly' },
+  { name: 'Afflicted Monster Bone', source: 'Anomaly Investigations (AR 31–100)', rankTier: 'MR 10+', category: 'Anomaly' },
+  { name: 'Afflicted Hardbone', source: 'Anomaly Investigations (AR 101+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Blood', source: 'Anomaly Quests (A3–A5)', rankTier: 'MR 10+', category: 'Anomaly' },
+  { name: 'Afflicted Dragon Blood', source: 'Anomaly Investigations (AR 31–100)', rankTier: 'MR 10+', category: 'Anomaly' },
+  { name: 'Afflicted Pure Blood', source: 'Anomaly Investigations (AR 101+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Pelt', source: 'Anomaly Quests (A1–A2)', rankTier: 'MR 10+', category: 'Anomaly' },
+  { name: 'Afflicted Thickhide', source: 'Anomaly Investigations (AR 101+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Shell', source: 'Anomaly Quests (A2–A4)', rankTier: 'MR 10+', category: 'Anomaly' },
+  { name: 'Afflicted Carapace', source: 'Anomaly Investigations (AR 101+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Fang', source: 'Anomaly Quests (A2–A4)', rankTier: 'MR 10+', category: 'Anomaly' },
+  { name: 'Afflicted Hardfang', source: 'Anomaly Investigations (AR 101+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Claw', source: 'Anomaly Quests (A4–A6)', rankTier: 'MR 10+', category: 'Anomaly' },
+  { name: 'Afflicted Hardclaw', source: 'Anomaly Investigations (AR 101+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Scale', source: 'Anomaly Quests (A3–A5)', rankTier: 'MR 10+', category: 'Anomaly' },
+  { name: 'Afflicted Cortex', source: 'Anomaly Investigations (AR 101+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Direhorn', source: 'Anomaly Quests (A6–A8)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Direclaw', source: 'Anomaly Investigations (AR 121+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Direwing', source: 'Anomaly Investigations (AR 141+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Direfang', source: 'Anomaly Investigations (AR 161+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Direscale', source: 'Anomaly Investigations (AR 181+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Direbone', source: 'Anomaly Investigations (AR 201+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Afflicted Direblood', source: 'Anomaly Investigations (AR 221+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Amber Essence', source: 'Anomaly Investigations (Qurious Crafting)', rankTier: 'MR 10+', category: 'Anomaly' },
+  { name: 'Amber Essence+', source: 'Anomaly Investigations (AR 51+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Prime Amber Essence', source: 'Anomaly Investigations (AR 101+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+  { name: 'Royal Amber Essence', source: 'Anomaly Investigations (AR 161+)', rankTier: 'Endgame AR', category: 'Anomaly' },
+
+  // =========================================================================
+  // 5. ORES, CRYSTALS & DECORATION JEWELS
+  // =========================================================================
+  { name: 'Iron Ore', source: 'Low / High Rank Mining Outcrops', rankTier: 'HR', category: 'Ore & Jewel' },
+  { name: 'Machalite Ore', source: 'Low / High Rank Mining Outcrops', rankTier: 'HR', category: 'Ore & Jewel' },
+  { name: 'Dragonite Ore', source: 'HR Mining Outcrops (Lava Caverns)', rankTier: 'HR', category: 'Ore & Jewel' },
+  { name: 'Carbalite Ore', source: 'HR Mining Outcrops', rankTier: 'HR', category: 'Ore & Jewel' },
+  { name: 'Fucium Ore', source: 'HR Lava Caverns Mining Outcrops', rankTier: 'HR', category: 'Ore & Jewel' },
+  { name: 'Firecell Stone', source: 'HR Lava Caverns Rare Mining', rankTier: 'HR', category: 'Ore & Jewel' },
+  { name: 'Novacrystal', source: 'HR Flooded Forest Rare Mining', rankTier: 'HR', category: 'Ore & Jewel' },
+  { name: 'Bathycite Ore', source: 'HR Sandy Plains / Flooded Forest', rankTier: 'HR', category: 'Ore & Jewel' },
+  { name: 'Eltalite Ore', source: 'MR Mining Outcrops', rankTier: 'Early MR', category: 'Ore & Jewel' },
+  { name: 'Meldspar Ore', source: 'MR Mining Outcrops (Citadel / Jungle)', rankTier: 'Early MR', category: 'Ore & Jewel' },
+  { name: 'Centuria Ore', source: 'MR Rare Mining Outcrops', rankTier: 'Story MR', category: 'Ore & Jewel' },
+  { name: 'Purecrystal', source: 'MR Citadel / Flooded Forest Mining', rankTier: 'Early MR', category: 'Ore & Jewel' },
+  { name: 'Ultimas Crystal', source: 'MR Citadel Rare Mining', rankTier: 'Story MR', category: 'Ore & Jewel' },
+  { name: 'Awegite', source: 'MR Lava Caverns Mining', rankTier: 'Early MR', category: 'Ore & Jewel' },
+  { name: 'Aquaglow Jewel', source: 'HR Quests (Lv1 Decos)', rankTier: 'HR', category: 'Ore & Jewel' },
+  { name: 'Bloodrun Jewel', source: 'High Rank Apex / Elders', rankTier: 'HR', category: 'Ore & Jewel' },
+  { name: 'Lazurite Jewel', source: 'High Rank / Early MR Rewards', rankTier: 'HR', category: 'Ore & Jewel' },
+  { name: 'Adamantine Jewel', source: 'MR Quests (Lv2–3 Decos)', rankTier: 'Early MR', category: 'Ore & Jewel' },
+  { name: 'Sovereign Jewel', source: 'MR Endgame Quests (Lv4 Decos)', rankTier: 'Endgame AR', category: 'Ore & Jewel' },
+
+  // =========================================================================
+  // 6. BONES, DRAGONBLOOD & INSECTS
+  // =========================================================================
+  { name: 'Monster Bone S', source: 'Low / High Rank Bonepiles', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Monster Bone M', source: 'HR Quests & Bonepiles', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Monster Bone L', source: 'HR Monster Rewards', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Monster Bone+', source: 'HR Monster Rewards', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Monster Keenbone', source: 'HR Apex / Strong Monsters', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Monster Hardbone', source: 'HR Elder / 7★ Monsters', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Monster Slogbone', source: 'Early MR Monsters & Bonepiles', rankTier: 'Early MR', category: 'Bone & Bug' },
+  { name: 'Monster Toughbone', source: 'Story MR / Citadel Bonepiles', rankTier: 'Story MR', category: 'Bone & Bug' },
+  { name: 'Elder Dragon Bone', source: 'HR Elder Dragons', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Elder Dragon Blood', source: 'HR Elder Dragons', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Pure Dragon Blood', source: 'MR Elder Dragons', rankTier: 'Story MR', category: 'Bone & Bug' },
+  { name: 'Killer Beetle', source: 'HR / MR Bug Spots', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Hercudrome', source: 'HR Rare Bug Spots', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'King Scarab', source: 'HR / Early MR Bug Spots', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Flutterfly', source: 'MR Jungle / Citadel Bug Spots', rankTier: 'Early MR', category: 'Bone & Bug' },
+  { name: 'Emperor Hopper', source: 'MR Rare Bug Spots', rankTier: 'Early MR', category: 'Bone & Bug' },
+  { name: 'Great Hornfly', source: 'Meowcenaries & Argosy Rare Finds', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Dosbiscus', source: 'Argosy Rare Plant Trade', rankTier: 'HR', category: 'Bone & Bug' },
+  { name: 'Stoutbone', source: 'MR Small Monster / Bonepiles', rankTier: 'Early MR', category: 'Bone & Bug' },
+
+  // =========================================================================
+  // 7. TICKETS, COINS & MELDING MATERIALS
+  // =========================================================================
+  { name: 'Royal Order Certificate', source: 'Elgado Follower Quests', rankTier: 'Story MR', category: 'Ticket & Coin' },
+  { name: 'Royal Order Certificate II', source: 'Elgado Support Survey Quests', rankTier: 'Story MR', category: 'Ticket & Coin' },
+  { name: 'Royal Order Certificate III', source: 'High-Star Follower Quests', rankTier: 'MR 10+', category: 'Ticket & Coin' },
+  { name: 'Elgado Ticket', source: 'Elgado Villager Requests', rankTier: 'Early MR', category: 'Ticket & Coin' },
+  { name: 'Kamura Ticket', source: 'Kamura Village Quests', rankTier: 'HR', category: 'Ticket & Coin' },
+  { name: 'Outfit Voucher', source: 'HR Rampage / Event Quests', rankTier: 'HR', category: 'Ticket & Coin' },
+  { name: 'Outfit Voucher+', source: 'Anomaly Quests & Investigations', rankTier: 'MR 10+', category: 'Ticket & Coin' },
+  { name: 'Arena Coin', source: 'Utsushi Arena Quests', rankTier: 'HR', category: 'Ticket & Coin' },
+  { name: 'Hunter King Coin', source: 'HR Arena Quests', rankTier: 'HR', category: 'Ticket & Coin' },
+  { name: 'Ace Hunter Coin', source: 'MR Arena Quests (Arlow)', rankTier: 'Story MR', category: 'Ticket & Coin' },
+  { name: 'Investigation Coin', source: 'Bahari Anomaly Lab / Investigations', rankTier: 'MR 10+', category: 'Ticket & Coin' },
+  { name: 'Friend Voucher', source: 'Multiplayer Quests', rankTier: 'HR', category: 'Ticket & Coin' },
+  { name: 'MP Accelerant', source: 'Argosy / Bahari Research Lab', rankTier: 'MR 10+', category: 'Ticket & Coin' },
+  { name: 'Melding Blood', source: 'MR Melding Pot (Aurora / Anima)', rankTier: 'Story MR', category: 'Ticket & Coin' },
+  { name: 'Melding Pudding', source: 'Qurious Melding (Vigor / Cyclus)', rankTier: 'Endgame AR', category: 'Ticket & Coin' },
+];
+
+const SOURCE_MAP = new Map(MATERIALS_CATALOG.map((m) => [m.name, m.source]));
+
+function req(name: string, quantity: number) {
+  return {
+    name,
+    quantity,
+    source: SOURCE_MAP.get(name) ?? 'Master Rank Quests',
+  };
+}
+
+function deriveMonsterMaterials(note: string, rankTier: string, isWeapon: boolean) {
+  const lower = note.toLowerCase();
+  const mult = isWeapon ? 2 : 1;
+
+  if (lower.includes('primordial')) {
+    return [req('Silver-rimmed Shard', 3 * mult), req('Primordial Bloodstone', 1), req('Pure Dragon Blood', 2)];
+  }
+  if (lower.includes('shagaru')) {
+    return [req('Risen Dragonbone', 2 * mult), req('S.Magala Mantle', 1), req('Afflicted Direhorn', 2)];
+  }
+  if (lower.includes('risen') && lower.includes('teostra')) {
+    return [req('Risen Dragonbone', 2 * mult), req('Teostra Hellfire', 2), req('Large Elder Dragon Gem', 1)];
+  }
+  if (lower.includes('risen') && lower.includes('kushala')) {
+    return [req('Risen Dragonbone', 2 * mult), req('Kushala Daora Hardhorn', 2), req('Large Elder Dragon Gem', 1)];
+  }
+  if (lower.includes('risen') && lower.includes('chameleos')) {
+    return [req('Risen Dragonbone', 2 * mult), req('Chameleos Fellwing', 2), req('Large Elder Dragon Gem', 1)];
+  }
+  if (lower.includes('valstrax')) {
+    return [req('Valstrax Ruby+', 1), req('Risen Dragonbone', 2 * mult), req('Pure Dragon Blood', 2)];
+  }
+  if (lower.includes('chaotic gore')) {
+    return [req('Contrary Scale', 1), req('Gore Magala Mantle', 1), req('Afflicted Blood', 3)];
+  }
+  if (lower.includes('gore magala')) {
+    return [req('Gore Magala Mantle', 1), req('Afflicted Fang', 2 * mult), req('Pure Dragon Blood', 1)];
+  }
+  if (lower.includes('amatsu')) {
+    return [req('Stormsoul Hardhorn', 2 * mult), req('Heavenly Dragongem', 1), req('Pure Dragon Blood', 2)];
+  }
+  if (lower.includes('velkhana')) {
+    return [req('Velkhana Fellwing', 2 * mult), req('Crystal Shard', 1), req('Pure Dragon Blood', 2)];
+  }
+  if (lower.includes('flaming espinas')) {
+    return [req('Espinas Hardhorn', 2 * mult), req('Flaming Mantle', 1), req('Afflicted Blood', 2)];
+  }
+  if (lower.includes('espinas')) {
+    return [req('Espinas Hardhorn', 2 * mult), req('Espinas Mantle', 1), req('Eltalite Ore', 3)];
+  }
+  if (lower.includes('gaismagorm')) {
+    return [req('Gaismagorm Mantle', 2), req('Abyssal Dragonspire', 1), req('Pure Dragon Blood', 2)];
+  }
+  if (lower.includes('scorned')) {
+    return [req('Magnamalo Orb', 1), req('Afflicted Direhorn', 3), req('Eltalite Ore', 4)];
+  }
+  if (lower.includes('malzeno')) {
+    return [req('Malzeno Bloodstone', 1), req('Pure Dragon Blood', 2), req('Eltalite Ore', 3)];
+  }
+  if (lower.includes('silver rathalos')) {
+    return [req('Silver Rathalos Lash', 2 * mult), req('Rathalos Mantle', 1), req('Afflicted Claw', 2)];
+  }
+  if (lower.includes('gold rathian')) {
+    return [req('Rathian Mantle', 1), req('Afflicted Claw', 2 * mult), req('Eltalite Ore', 3)];
+  }
+  if (lower.includes('rathalos')) {
+    return [req('Rathalos Mantle', 1), req('Eltalite Ore', 3 * mult), req('Afflicted Bone', 2)];
+  }
+  if (lower.includes('rathian')) {
+    return [req('Rathian Mantle', 1), req('Eltalite Ore', 3 * mult)];
+  }
+  if (lower.includes('lucent')) {
+    return [req('Moonlight Cortex', 2 * mult), req('Cloudy Moonshard', 1), req('Afflicted Fang', 2)];
+  }
+  if (lower.includes('nargacuga')) {
+    return [req('Nargacuga Mantle', 1), req('Eltalite Ore', 2 * mult)];
+  }
+  if (lower.includes('violet mizutsune')) {
+    return [req('Violet Mizutsune Scale+', 2 * mult), req('Mizutsune Mantle', 1), req('Afflicted Claw', 2)];
+  }
+  if (lower.includes('mizutsune')) {
+    return [req('Mizutsune Mantle', 1), req('Eltalite Ore', 3 * mult)];
+  }
+  if (lower.includes('seething bazel')) {
+    return [req('Seething Scale', 2 * mult), req('Bazelgeuse Mantle', 1), req('Afflicted Blood', 2)];
+  }
+  if (lower.includes('bazel')) {
+    return [req('Bazelgeuse Mantle', 1), req('Eltalite Ore', 3 * mult)];
+  }
+  if (lower.includes('teostra')) {
+    return [req('Teostra Fellwing', 2 * mult), req('Large Elder Dragon Gem', 1), req('Pure Dragon Blood', 2)];
+  }
+  if (lower.includes('kushala')) {
+    return [req('Kushala Daora Hardhorn', 2 * mult), req('Large Elder Dragon Gem', 1)];
+  }
+  if (lower.includes('chameleos')) {
+    return [req('Chameleos Fellwing', 2 * mult), req('Large Elder Dragon Gem', 1)];
+  }
+  if (lower.includes('narwa') || lower.includes('ibushi')) {
+    return [req('Orb of Origin+', 1), req('Pure Dragon Blood', 2 * mult)];
+  }
+  if (lower.includes('lunagaron')) {
+    return [req('Lunagaron Cortex', 2 * mult), req('Lunagaron Frost Jewel', 1)];
+  }
+  if (lower.includes('garangolm')) {
+    return [req('Garangolm Hardplate', 2 * mult), req('Eltalite Ore', 3)];
+  }
+  if (lower.includes('astalos')) {
+    return [req('Astalos Mantle', 1), req('Eltalite Ore', 3 * mult)];
+  }
+  if (lower.includes('zinogre')) {
+    return [req('Zinogre Skymerald', 1), req('Eltalite Ore', 3 * mult)];
+  }
+  if (lower.includes('tigrex')) {
+    return [req('Tigrex Mantle', 1), req('Eltalite Ore', 3 * mult)];
+  }
+  if (lower.includes('diablos')) {
+    return [req('Diablos Hardhorn', 2 * mult), req('Eltalite Ore', 2)];
+  }
+  if (lower.includes('almudron')) {
+    return [req('Almudron Mantle', 1), req('Eltalite Ore', 3 * mult)];
+  }
+  if (lower.includes('rakna')) {
+    return [req('Rakna-Kadaki Cortex', 2 * mult), req('Eltalite Ore', 2)];
+  }
+  if (lower.includes('somnacanth')) {
+    return [req('Aurora Somnacanth Fin+', 2 * mult), req('Eltalite Ore', 2)];
+  }
+  if (lower.includes('anjanath')) {
+    return [req('Anjanath Mantle', 1), req('Eltalite Ore', 2 * mult)];
+  }
+  if (lower.includes('hermitaur')) {
+    return [req('Hermitaur Cortex', 2 * mult), req('Eltalite Ore', 2)];
+  }
+  if (lower.includes('ceanataur')) {
+    return [req('Ceanataur Cortex', 2 * mult), req('Eltalite Ore', 2)];
+  }
+  if (lower.includes('rajang')) {
+    return [req('Furious Rajang Heart', 1), req('Afflicted Claw', 2 * mult)];
+  }
+  if (lower.includes('royal order')) {
+    return [req('Royal Order Certificate', 2 * mult), req('Eltalite Ore', 4)];
+  }
+  if (rankTier === 'HR') {
+    return [req('Bloodrun Jewel', 2), req('Lazurite Jewel', 3)];
+  }
+  if (rankTier === 'Early MR') {
+    return [req('Eltalite Ore', 3 * mult), req('Adamantine Jewel', 1)];
+  }
+  return [req('Afflicted Bone', 3), req('Eltalite Ore', 3), req('Pure Dragon Blood', 1)];
+}
+
+const weaponMap = new Map<string, WeaponItem>(WEAPONS_DB.map((w) => [w.id, w]));
+const armorMap = new Map<string, ArmorItem>(ARMOR_DB.map((a) => [a.id, a]));
+const decoMap = new Map<string, DecorationItem>(DECORATIONS_DB.map((d) => [d.id, d]));
+
+export function getEquipmentRecipe(
+  kind: 'weapon' | 'armor' | 'decoration',
+  id: string
+): {
+  itemId: string;
+  itemName: string;
+  slotLabel: string;
+  zennyCost: number;
+  materials: Array<{ name: string; quantity: number; source: string }>;
+} | null {
+  if (kind === 'weapon') {
+    const w = weaponMap.get(id);
+    if (!w) return null;
+    return {
+      itemId: w.id,
+      itemName: w.name,
+      slotLabel: 'Weapon',
+      zennyCost: w.rankTier === 'Endgame AR' ? 96000 : w.rankTier === 'MR 10+' ? 72000 : 48000,
+      materials: deriveMonsterMaterials(w.unlockNote, w.rankTier, true),
+    };
+  }
+  if (kind === 'armor') {
+    const a = armorMap.get(id);
+    if (!a) return null;
+    return {
+      itemId: a.id,
+      itemName: a.name,
+      slotLabel: a.slot,
+      zennyCost: a.rankTier === 'Endgame AR' ? 32000 : a.rankTier === 'MR 10+' ? 24000 : 14000,
+      materials: deriveMonsterMaterials(a.unlockNote, a.rankTier, false),
+    };
+  }
+  const d = decoMap.get(id);
+  if (!d) return null;
+  const decoMats =
+    d.slotLevel === 4
+      ? [req('Sovereign Jewel', 2), req('Afflicted Cortex', 2)]
+      : d.slotLevel === 3
+      ? [req('Adamantine Jewel', 2), req('Afflicted Blood', 2)]
+      : d.slotLevel === 2
+      ? [req('Adamantine Jewel', 1), req('Bloodrun Jewel', 1)]
+      : [req('Lazurite Jewel', 2)];
+  return {
+    itemId: d.id,
+    itemName: d.name,
+    slotLabel: `Decoration Lv${d.slotLevel}`,
+    zennyCost: d.slotLevel * 4500,
+    materials: decoMats,
+  };
+}
