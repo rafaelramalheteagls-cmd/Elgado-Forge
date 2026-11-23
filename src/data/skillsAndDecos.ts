@@ -1357,13 +1357,19 @@ export const DECORATIONS_DB: DecorationItem[] = [
   { id: 'deco_hellfire_4', name: 'Hellfire Jewel+ 4', slotLevel: 4, skillId: 'hellfire_cloak', points: 2, rankTier: 'MR 10+', minMr: 10 },
 
   // Rampage Decorations
+  { id: 'ramp_def_edge', name: 'Defense Edge Jewel 1', slotLevel: 1, isRampage: true, skillId: 'ramp_def_grinder', points: 1, rankTier: 'Early MR', minMr: 1 },
+  { id: 'ramp_rally', name: 'Rally Jewel 1', slotLevel: 1, isRampage: true, skillId: 'ramp_buddy_rally', points: 1, rankTier: 'Early MR', minMr: 1 },
+  { id: 'ramp_fireblight', name: 'Fireblight Jewel 1', slotLevel: 1, isRampage: true, skillId: 'ramp_fireblight', points: 1, rankTier: 'Early MR', minMr: 1 },
+  { id: 'ramp_waterblight', name: 'Waterblight Jewel 1', slotLevel: 1, isRampage: true, skillId: 'ramp_waterblight', points: 1, rankTier: 'Early MR', minMr: 1 },
+  { id: 'ramp_thunderblight', name: 'Thunderblight Jewel 1', slotLevel: 1, isRampage: true, skillId: 'ramp_thunderblight', points: 1, rankTier: 'Early MR', minMr: 1 },
+  { id: 'ramp_iceblight', name: 'Iceblight Jewel 1', slotLevel: 1, isRampage: true, skillId: 'ramp_iceblight', points: 1, rankTier: 'Early MR', minMr: 1 },
   { id: 'ramp_anti_wyvern', name: 'Anti-Wyvern Jewel 2', slotLevel: 2, isRampage: true, skillId: 'ramp_anti_species', points: 1, rankTier: 'Story MR', minMr: 4 },
   { id: 'ramp_anti_elder', name: 'Anti-Elder Jewel 2', slotLevel: 2, isRampage: true, skillId: 'ramp_anti_species', points: 1, rankTier: 'Story MR', minMr: 5 },
   { id: 'ramp_anti_aquatic', name: 'Anti-Aquatic Jewel 2', slotLevel: 2, isRampage: true, skillId: 'ramp_anti_species', points: 1, rankTier: 'Story MR', minMr: 4 },
   { id: 'ramp_anti_fanged', name: 'Anti-Fanged Jewel 2', slotLevel: 2, isRampage: true, skillId: 'ramp_anti_species', points: 1, rankTier: 'Story MR', minMr: 4 },
   { id: 'ramp_anti_aerial', name: 'Anti-Aerial Jewel 2', slotLevel: 2, isRampage: true, skillId: 'ramp_anti_species', points: 1, rankTier: 'Story MR', minMr: 4 },
-  { id: 'ramp_kushala_soul', name: 'Kushala Daora Soul 2', slotLevel: 2, isRampage: true, skillId: 'ramp_kushala', points: 1, rankTier: 'MR 10+', minMr: 10 },
   { id: 'ramp_teostra_soul', name: 'Teostra Soul 2', slotLevel: 2, isRampage: true, skillId: 'ramp_teostra', points: 1, rankTier: 'MR 10+', minMr: 10 },
   { id: 'ramp_chameleos_soul', name: 'Chameleos Soul 2', slotLevel: 2, isRampage: true, skillId: 'ramp_chameleos', points: 1, rankTier: 'MR 10+', minMr: 10 },
+  { id: 'ramp_kushala_soul', name: 'Daora Soul Jewel 3', slotLevel: 3, isRampage: true, skillId: 'ramp_kushala', points: 1, rankTier: 'MR 10+', minMr: 10 },
   { id: 'ramp_elembane', name: 'Elembane Jewel 3', slotLevel: 3, isRampage: true, skillId: 'ramp_elembane', points: 1, rankTier: 'MR 10+', minMr: 10 },
 ];

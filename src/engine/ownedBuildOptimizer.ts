@@ -93,14 +93,6 @@ const EMPTY_ARMOR_AUGMENT = {
   slotUpgrade: 0,
 };
 
-const EMPTY_Q_ARMOR: BuildLoadout['quriousArmor'] = {
-  Helm: { ...EMPTY_ARMOR_AUGMENT },
-  Chest: { ...EMPTY_ARMOR_AUGMENT },
-  Arms: { ...EMPTY_ARMOR_AUGMENT },
-  Waist: { ...EMPTY_ARMOR_AUGMENT },
-  Legs: { ...EMPTY_ARMOR_AUGMENT },
-};
-
 const EMPTY_Q_WEAPON: BuildLoadout['quriousWeapon'] = {
   attackLevel: 0,
   elementLevel: 0,
@@ -112,60 +104,178 @@ const EMPTY_Q_WEAPON: BuildLoadout['quriousWeapon'] = {
 const TRUE_ELEMENTS = new Set(['Fire', 'Water', 'Thunder', 'Ice', 'Dragon']);
 const STATUS_ELEMENTS = new Set(['Poison', 'Paralysis', 'Sleep', 'Blast']);
 
+type ShotSpecialty = 'pierce' | 'spread' | 'normal_rapid' | 'sticky' | 'mixed_pierce_spread';
+
+function isElementPhialCB(weapon: WeaponItem): boolean {
+  if (weapon.weaponClass !== 'Charge Blade') return false;
+  if (/element phial/i.test(weapon.unlockNote)) return true;
+  if (/impact phial/i.test(weapon.unlockNote) || weapon.id === 'cb_rajang_hr') return false;
+  return TRUE_ELEMENTS.has(weapon.elementType);
+}
+
+function inferShotSpecialty(weapon: WeaponItem): ShotSpecialty | null {
+  if (weapon.damageType !== 'Shot') return null;
+
+  const text = `${weapon.name} ${weapon.unlockNote}`.toLowerCase();
+
+  if (weapon.weaponClass === 'Bow') {
+    if (text.includes('spread')) return 'spread';
+    if (text.includes('pierce') && !text.includes('rapid')) return 'pierce';
+    if (text.includes('pierce') && text.includes('rapid')) return 'pierce';
+    return 'normal_rapid';
+  }
+
+  // Light Bowgun & Heavy Bowgun
+  if (text.includes('sticky') && !text.includes('pierc') && !text.includes('spread')) {
+    return 'sticky';
+  }
+  if (text.includes('pierc') && text.includes('spread')) {
+    // Check curated meta template for this weapon if available
+    const tpl = META_BUILD_TEMPLATES.find((t) => t.loadout.weaponId === weapon.id);
+    if (tpl) {
+      const decos = Object.values(tpl.loadout.decorations).flat();
+      if (decos.some((d) => d.includes('spread'))) return 'spread';
+      if (decos.some((d) => d.includes('pierce'))) return 'pierce';
+    }
+    return 'mixed_pierce_spread';
+  }
+  if (text.includes('spread')) return 'spread';
+  if (text.includes('pierc')) return 'pierce';
+  if (text.includes('normal')) return 'normal_rapid';
+
+  return 'pierce';
+}
+
 export function getSkillWeightsForWeapon(weapon: WeaponItem): Record<string, number> {
+  const isShot = weapon.damageType === 'Shot';
+  const isBow = weapon.weaponClass === 'Bow';
+  const isBowgun =
+    weapon.weaponClass === 'Light Bowgun' || weapon.weaponClass === 'Heavy Bowgun';
+  const hasTrueElem = TRUE_ELEMENTS.has(weapon.elementType) && weapon.elementValue > 0;
+  const hasStatus = STATUS_ELEMENTS.has(weapon.elementType) && weapon.elementValue > 0;
+  const shotSpecialty = inferShotSpecialty(weapon);
+  const elemCB = isElementPhialCB(weapon);
+
+  // Core universal skills (every weapon benefits from affinity/crit/raw unless overridden below)
   const weights: Record<string, number> = {
     weakness_exploit: 18,
     critical_boost: 16,
     attack_boost: 14,
     critical_eye: 13,
     agitator: 11,
-    burst: 12,
+    burst: hasTrueElem ? 15 : 11,
     mail_of_hellfire: 14,
     bloodlust: 13,
-    coalescence: 10,
-    blood_awakening: 14,
+    coalescence: 9,
+    blood_awakening: 13,
     blood_rite: 8,
-    powder_mantle: 12,
-    heaven_sent: 12,
-    frostcraft: 11,
+    powder_mantle: 11,
     dereliction: 12,
     resentment: 7,
-    peak_performance: 6,
+    peak_performance: 7,
+    resuscitate: 6,
     intrepid_heart: 10,
-    wirebug_whisperer: 9,
+    wirebug_whisperer: isBowgun ? 4 : 9,
+    wind_mantle: isBowgun ? 0 : 9,
+    frenzied_bloodlust: isBowgun ? 3 : 8,
     defiance: 5,
     stun_resistance: 4,
+    flinch_free: 2,
+    spiribirds_call: 3,
     evade_extender: 5,
-    evade_window: 5,
+    evade_window: 4,
   };
 
-  if (weapon.damageType !== 'Shot') {
-    weights.handicraft = weapon.handicraftBonusSharpness ? 12 : 5;
+  // Sticky bowguns & Impact phials don't scale explosions with affinity/crit boost,
+  // though physical shots/hits still gain minor value
+  if (shotSpecialty === 'sticky') {
+    weights.weakness_exploit = 6;
+    weights.critical_boost = 4;
+    weights.critical_eye = 4;
+    weights.attack_boost = 18;
+    weights.artillery = 24;
+    weights.peak_performance = 9;
+    weights.agitator = 14;
+  }
+
+  // Sharpness & Melee-only skills (0 on all Gunners!)
+  if (!isShot) {
+    weights.heaven_sent = 12;
+    weights.handicraft =
+      weapon.handicraftBonusSharpness && weapon.sharpness !== 'Purple'
+        ? 13
+        : weapon.sharpness === 'Purple'
+        ? 2
+        : 6;
     weights.masters_touch = 11;
     weights.protective_polish = 9;
     weights.razor_sharp = 8;
     weights.speed_sharpening = 5;
-  }
-
-  if (TRUE_ELEMENTS.has(weapon.elementType) && weapon.elementValue > 0) {
-    const elemSkill = `${weapon.elementType.toLowerCase()}_attack`;
-    weights[elemSkill] = 14;
-    weights.element_exploit = 15;
-    weights.critical_element = 12;
-    weights.dragon_conversion = 14;
-    weights.furious = 10;
-    weights.strife = 13;
-    weights.burst = 15;
-  }
-
-  if (STATUS_ELEMENTS.has(weapon.elementType)) {
-    weights.buildup_boost = 16;
-    weights.status_trigger = 11;
-    if (weapon.elementType === 'Poison' || weapon.elementType === 'Paralysis') {
-      weights.foray = 14;
+    weights.minds_eye = 3;
+    weights.bladescale_hone = 5;
+    if (weapon.sharpness === 'Green' || weapon.sharpness === 'Yellow') {
+      weights.bludgeoner = 12;
+    }
+    if (weapon.sharpness !== 'Purple') {
+      weights.grinder_s = 7;
     }
   }
 
+  // Elemental Attack & Boosters (STRICTLY matching weapon.elementType!)
+  if (hasTrueElem) {
+    const elemSkill = `${weapon.elementType.toLowerCase()}_attack`;
+    weights[elemSkill] = 16;
+    weights.element_exploit = 15;
+    weights.critical_element = 12;
+    weights.strife = 12;
+
+    if (!isShot) {
+      weights.dragon_conversion = 14;
+      weights.furious = 10;
+    }
+    if (weapon.elementType === 'Fire') {
+      weights.teostra_blessing = 9;
+    } else if (weapon.elementType === 'Water' || weapon.elementType === 'Ice') {
+      weights.kushala_blessing = 9;
+    }
+    if (
+      weapon.weaponClass === 'Great Sword' ||
+      weapon.weaponClass === 'Hammer' ||
+      weapon.weaponClass === 'Bow'
+    ) {
+      weights.charge_master = 10;
+    }
+    // Dragonheart inflicts Dragonblight and zeroes non-Dragon elements
+    if (weapon.elementType === 'Dragon') {
+      weights.dragonheart = 9;
+    }
+  } else {
+    // Raw / Status weapons can use Dragonheart comfortably
+    if (!hasStatus) {
+      weights.dragonheart = 8;
+    }
+  }
+
+  // Status Skills (STRICTLY matching weapon status!)
+  if (hasStatus) {
+    weights.buildup_boost = 16;
+    weights.status_trigger = 10;
+    if (weapon.elementType === 'Poison') {
+      weights.poison_attack = 9;
+      weights.foray = 14;
+      weights.chameleos_blessing = 8;
+    } else if (weapon.elementType === 'Paralysis') {
+      weights.paralysis_attack = 9;
+      weights.foray = 14;
+    } else if (weapon.elementType === 'Sleep') {
+      weights.sleep_attack = 8;
+    } else if (weapon.elementType === 'Blast') {
+      weights.blast_attack = 9;
+      weights.teostra_blessing = 8;
+    }
+  }
+
+  // Weapon-Class Specific Specialization
   switch (weapon.weaponClass) {
     case 'Great Sword':
       weights.focus = 16;
@@ -173,24 +283,29 @@ export function getSkillWeightsForWeapon(weapon: WeaponItem): Record<string, num
       weights.frostcraft = 18;
       weights.wirebug_whisperer = 13;
       weights.critical_draw = 7;
+      weights.maximum_might = 8;
       break;
     case 'Long Sword':
-      weights.quick_sheathe = 22;
+      weights.quick_sheathe = 24;
       weights.wirebug_whisperer = 14;
       weights.wind_mantle = 14;
       weights.frostcraft = 15;
+      weights.maximum_might = 9;
       break;
     case 'Sword & Shield':
       weights.offensive_guard = 15;
       weights.wirebug_whisperer = 12;
       weights.embolden = 9;
+      weights.frostcraft = 11;
+      weights.slugger = 6;
       break;
     case 'Dual Blades':
       weights.berserk = 18;
       weights.strife = 18;
       weights.stamina_surge = 10;
       weights.constitution = 8;
-      weights.heaven_sent = 14;
+      weights.marathon_runner = 7;
+      weights.heaven_sent = 15;
       break;
     case 'Lance':
       weights.offensive_guard = 18;
@@ -199,37 +314,53 @@ export function getSkillWeightsForWeapon(weapon: WeaponItem): Record<string, num
       weights.embolden = 12;
       break;
     case 'Gunlance':
-      weights.artillery = 22;
-      weights.load_shells = 18;
+      weights.artillery = 24;
+      weights.load_shells = 20;
       weights.wirebug_whisperer = 15;
       weights.evade_extender = 12;
       weights.guard = 11;
+      weights.guard_up = 8;
+      weights.offensive_guard = 7;
       weights.razor_sharp = 12;
-      weights.heaven_sent = 15;
+      weights.heaven_sent = 16;
+      weights.sneak_attack = 13;
       break;
     case 'Hammer':
       weights.focus = 14;
       weights.slugger = 11;
+      weights.stamina_thief = 5;
       weights.wirebug_whisperer = 13;
+      weights.frostcraft = 11;
       break;
     case 'Hunting Horn':
       weights.horn_maestro = 24;
       weights.wirebug_whisperer = 15;
       weights.evade_extender = 9;
+      weights.slugger = 7;
+      weights.attack_boost = 17;
+      weights.maximum_might = 8;
       break;
     case 'Switch Axe':
       weights.rapid_morph = 24;
       weights.power_prolonger = 10;
+      weights.focus = 5;
       weights.wirebug_whisperer = 12;
       weights.evade_extender = 10;
+      weights.maximum_might = 8;
       break;
     case 'Charge Blade':
       weights.rapid_morph = 20;
-      weights.load_shells = 18;
-      weights.guard = 12;
+      weights.load_shells = 19;
+      weights.guard = 13;
       weights.guard_up = 9;
-      if (!TRUE_ELEMENTS.has(weapon.elementType)) {
-        weights.artillery = 16;
+      weights.offensive_guard = 12;
+      weights.focus = 5;
+      if (!elemCB) {
+        weights.artillery = 18;
+        weights.slugger = 6;
+      } else {
+        weights.burst = 17;
+        weights.element_exploit = 16;
       }
       break;
     case 'Insect Glaive':
@@ -237,40 +368,149 @@ export function getSkillWeightsForWeapon(weapon: WeaponItem): Record<string, num
       weights.wirebug_whisperer = 13;
       weights.evade_extender = 9;
       weights.heaven_sent = 15;
+      weights.constitution = 5;
       break;
-    case 'Light Bowgun':
-      weights.rapid_fire_up = 20;
-      weights.pierce_up = 17;
-      weights.spread_up = 15;
-      weights.normal_rapid_up = 13;
-      weights.recoil_down = 16;
-      weights.reload_speed = 15;
+    case 'Light Bowgun': {
+      weights.recoil_down = 17;
+      weights.reload_speed = 16;
       weights.spare_shot = 14;
       weights.ammo_up = 13;
+      weights.ballistics = 9;
+      weights.steadiness = 6;
+      weights.maximum_might = 10;
+      if (shotSpecialty !== 'sticky') {
+        weights.rapid_fire_up = 20;
+      }
+      if (shotSpecialty === 'pierce') {
+        weights.pierce_up = hasTrueElem ? 13 : 19;
+      } else if (shotSpecialty === 'spread') {
+        weights.spread_up = 19;
+      } else if (shotSpecialty === 'normal_rapid') {
+        weights.normal_rapid_up = 19;
+      } else if (shotSpecialty === 'mixed_pierce_spread') {
+        weights.pierce_up = 16;
+        weights.spread_up = 13;
+      }
       break;
-    case 'Heavy Bowgun':
-      weights.pierce_up = 18;
-      weights.spread_up = 17;
-      weights.normal_rapid_up = 13;
-      weights.recoil_down = 16;
-      weights.reload_speed = 15;
+    }
+    case 'Heavy Bowgun': {
+      weights.recoil_down = 17;
+      weights.reload_speed = 16;
       weights.spare_shot = 15;
       weights.ammo_up = 15;
+      weights.ballistics = 9;
+      weights.steadiness = 6;
+      weights.tune_up = 8;
       weights.evade_extender = 10;
+      weights.guard = 7;
+      weights.guard_up = 5;
+      weights.maximum_might = 10;
+      if (shotSpecialty === 'pierce') {
+        weights.pierce_up = hasTrueElem ? 13 : 19;
+      } else if (shotSpecialty === 'spread') {
+        weights.spread_up = 19;
+      } else if (shotSpecialty === 'normal_rapid') {
+        weights.normal_rapid_up = 19;
+      } else if (shotSpecialty === 'mixed_pierce_spread') {
+        weights.pierce_up = 17;
+        weights.spread_up = 14;
+      }
       break;
-    case 'Bow':
+    }
+    case 'Bow': {
+      weights.bow_charge_plus = 24;
       weights.constitution = 17;
       weights.stamina_surge = 16;
-      weights.normal_rapid_up = 16;
-      weights.spread_up = 16;
-      weights.pierce_up = 14;
       weights.berserk = 18;
       weights.strife = 18;
-      weights.reload_speed = 11;
+      weights.ballistics = 8;
+      if (shotSpecialty === 'spread') {
+        weights.spread_up = 20;
+      } else if (shotSpecialty === 'pierce') {
+        weights.pierce_up = 20;
+      } else {
+        weights.normal_rapid_up = 20;
+      }
       break;
+    }
+  }
+
+  // Ensure Bowgun-only skills never leak onto Bow
+  if (!isBowgun) {
+    delete weights.recoil_down;
+    delete weights.reload_speed;
+    delete weights.spare_shot;
+    delete weights.ammo_up;
+    delete weights.steadiness;
+    delete weights.tune_up;
+    delete weights.rapid_fire_up;
   }
 
   return weights;
+}
+
+/**
+ * Adjusts skill weights dynamically for the active armor + talisman context
+ * to prevent dead conditional skills or conflicting synergies.
+ */
+function refineWeightsForContext(
+  baseWeights: Record<string, number>,
+  weapon: WeaponItem,
+  armorSkills: Record<string, number>,
+  talisman: TalismanItem
+): Record<string, number> {
+  const w = { ...baseWeights };
+  const totalOf = (sk: string) =>
+    (armorSkills[sk] ?? 0) +
+    (talisman.skill1Id === sk ? talisman.skill1Level : 0) +
+    (talisman.skill2Id === sk ? talisman.skill2Level : 0);
+
+  const hasBerserk = totalOf('berserk') > 0;
+  const hasDereliction = totalOf('dereliction') > 0;
+  const hasBloodlust = totalOf('bloodlust') > 0;
+  const hasRedHealth = hasBerserk || hasDereliction || hasBloodlust;
+  const hasHellfire = totalOf('hellfire_cloak') > 0;
+  const hasBloodRite = totalOf('blood_rite') > 0;
+  const hasDragonConversion = totalOf('dragon_conversion') > 0;
+
+  // Anti-synergy: Peak Performance has ~0 uptime with Berserk / Dereliction / Bloodlust
+  if (hasRedHealth) {
+    w.peak_performance = 0;
+  } else {
+    // Without red health drain, Resentment and Strife have minimal/0 uptime
+    w.resentment = 0;
+    if (!hasBerserk) {
+      w.strife = Math.min(w.strife ?? 0, 2);
+    }
+  }
+
+  if (hasBerserk) {
+    // Berserk drains HP on Blue Scroll -> Recovery Speed helps & infinite stamina with Strife
+    w.recovery_speed = 6;
+    if ((armorSkills.strife ?? 0) > 0) {
+      w.constitution = Math.min(w.constitution ?? 0, 8);
+      w.stamina_surge = Math.min(w.stamina_surge ?? 0, 8);
+    }
+  }
+
+  // Coalescence & Resuscitate require Bloodlust, Hellfire Cloak, or regular blights
+  if (!hasBloodlust && !hasHellfire) {
+    w.coalescence = 0;
+    w.resuscitate = 0;
+  }
+
+  // Blood Awakening needs Blood Rite (or Anomaly Bloodblight)
+  if (!hasBloodRite) {
+    w.blood_awakening = Math.min(w.blood_awakening ?? 0, 7);
+  }
+
+  // Dragon Conversion converts elemental resistances on Red Scroll
+  if (hasDragonConversion && !hasBerserk && TRUE_ELEMENTS.has(weapon.elementType)) {
+    w.dragon_resistance = 3;
+    w.thunder_resistance = 3;
+  }
+
+  return w;
 }
 
 function scoreTalismanForWeights(
@@ -279,10 +519,10 @@ function scoreTalismanForWeights(
 ): number {
   let score = 0;
   if (talisman.skill1Id && talisman.skill1Level > 0) {
-    score += (weights[talisman.skill1Id] ?? 2) * talisman.skill1Level;
+    score += (weights[talisman.skill1Id] ?? 0) * talisman.skill1Level;
   }
   if (talisman.skill2Id && talisman.skill2Level > 0) {
-    score += (weights[talisman.skill2Id] ?? 2) * talisman.skill2Level;
+    score += (weights[talisman.skill2Id] ?? 0) * talisman.skill2Level;
   }
   for (const s of talisman.slots) {
     if (s >= 4) score += 14;
@@ -322,8 +562,8 @@ function isRecipeCraftable(
 }
 
 /**
- * Greedily fills weapon, 5 armor pieces, and talisman slots using ONLY allowed decorations,
- * respecting exact slot levels and never exceeding any skill's maxLevel.
+ * Greedily fills weapon, 5 armor pieces, and talisman slots using ONLY strictly relevant,
+ * allowed decorations, respecting exact slot levels, owned decoration quantities, and max skill caps.
  */
 function slotOptimalDecorations(
   weapon: WeaponItem,
@@ -331,7 +571,12 @@ function slotOptimalDecorations(
   talisman: TalismanItem,
   allowedDecos: DecorationItem[],
   weights: Record<string, number>,
-  preferredDecoIds?: string[]
+  options?: {
+    preferredDecoIds?: string[];
+    ownedDecoCounts?: Record<string, number>;
+    includeCraftable?: boolean;
+    materials?: Record<string, number>;
+  }
 ): BuildLoadout['decorations'] {
   const skillTotals: Record<string, number> = {};
   const addPts = (id: string, pts: number) => {
@@ -347,8 +592,30 @@ function slotOptimalDecorations(
   if (talisman.skill1Id) addPts(talisman.skill1Id, talisman.skill1Level);
   if (talisman.skill2Id) addPts(talisman.skill2Id, talisman.skill2Level);
 
-  const preferredSet = new Set(preferredDecoIds ?? []);
+  const effectiveWeights = refineWeightsForContext(
+    weights,
+    weapon,
+    skillTotals,
+    talisman
+  );
+
+  const preferredSet = new Set(options?.preferredDecoIds ?? []);
+  const ownedDecoCounts = options?.ownedDecoCounts ?? {};
+  const hasCountTracking = Object.keys(ownedDecoCounts).length > 0;
+  const includeCraftable = options?.includeCraftable ?? false;
+  const materials = options?.materials ?? {};
+
   const normalDecos = allowedDecos.filter((d) => !d.isRampage);
+  const remainingCopies: Record<string, number> = {};
+  for (const d of normalDecos) {
+    if (includeCraftable && isRecipeCraftable('decoration', d.id, materials)) {
+      remainingCopies[d.id] = 99;
+    } else if (hasCountTracking) {
+      remainingCopies[d.id] = ownedDecoCounts[d.id] ?? 0;
+    } else {
+      remainingCopies[d.id] = 99;
+    }
+  }
 
   const result: BuildLoadout['decorations'] = {
     weapon: [],
@@ -373,8 +640,6 @@ function slotOptimalDecorations(
     { key: 'talisman', slots: talisman.slots },
   ];
 
-  // Fill smallest slots first or largest slots first? Smallest slots (Lv1) first prevents wasting Lv4 slots on Lv1 decos,
-  // OR fill Lv1 slots first with Lv1 decos, then Lv2, Lv3, Lv4 so high-priority Lv2 skills aren't starved while Lv1 skills fill Lv1 slots!
   const slotEntries: Array<{
     key: keyof BuildLoadout['decorations'];
     idx: number;
@@ -389,7 +654,7 @@ function slotOptimalDecorations(
     });
   }
 
-  // Sort smallest slot level first (1 -> 2 -> 3 -> 4) so Lv1 slots handle Lv1 elemental/utility decos
+  // Sort smallest slot level first (1 -> 2 -> 3 -> 4) so Lv1 slots handle Lv1 utility/elem decos
   // before larger slots pick multi-point Lv4/Lv2 decos.
   slotEntries.sort((a, b) => a.level - b.level);
 
@@ -399,16 +664,21 @@ function slotOptimalDecorations(
 
     for (const d of normalDecos) {
       if (d.slotLevel > entry.level) continue;
+      if ((remainingCopies[d.id] ?? 0) <= 0) continue;
+
+      const weight = effectiveWeights[d.skillId] ?? 0;
+      // CRITICAL: Never slot any decoration whose skill has zero relevance to this weapon/set!
+      if (weight <= 0) continue;
+
       const skillDef = getSkillById(d.skillId);
-      const maxLv = skillDef?.maxLevel ?? 7;
+      const maxLv =
+        d.skillId === 'flinch_free' ? 1 : (skillDef?.maxLevel ?? 7);
       const currentLv = skillTotals[d.skillId] ?? 0;
       const usablePoints = Math.max(0, Math.min(d.points, maxLv - currentLv));
       if (usablePoints <= 0) continue;
 
-      const weight = weights[d.skillId] ?? 1.5;
-      // Prefer decos that utilize the slot efficiently (e.g. Lv4 deco in Lv4 slot, or Lv2 in Lv2)
-      const slotEfficiencyBonus = d.slotLevel === entry.level ? 1.08 : 0.96;
-      const preferredBonus = preferredSet.has(d.id) ? 1.15 : 1.0;
+      const slotEfficiencyBonus = d.slotLevel === entry.level ? 1.08 : 0.94;
+      const preferredBonus = preferredSet.has(d.id) ? 1.12 : 1.0;
       const value = usablePoints * weight * slotEfficiencyBonus * preferredBonus;
 
       if (value > bestValue) {
@@ -423,6 +693,7 @@ function slotOptimalDecorations(
       }
       result[entry.key][entry.idx] = bestDeco.id;
       addPts(bestDeco.skillId, bestDeco.points);
+      remainingCopies[bestDeco.id] = Math.max(0, (remainingCopies[bestDeco.id] ?? 1) - 1);
     }
   }
 
@@ -431,13 +702,22 @@ function slotOptimalDecorations(
 
 function chooseBestScrollMode(
   weapon: WeaponItem,
-  armorSkills: Record<string, number>
+  armorSkills: Record<string, number>,
+  talisman?: TalismanItem
 ): ScrollMode {
-  if ((armorSkills.berserk ?? 0) > 0 || (armorSkills.strife ?? 0) > 0) {
+  const berserkLv =
+    (armorSkills.berserk ?? 0) +
+    (talisman?.skill1Id === 'berserk' ? talisman.skill1Level : 0) +
+    (talisman?.skill2Id === 'berserk' ? talisman.skill2Level : 0);
+
+  if (berserkLv > 0) {
     return 'Blue';
   }
   if ((armorSkills.dragon_conversion ?? 0) > 0 || (armorSkills.furious ?? 0) > 0) {
     return 'Red';
+  }
+  if ((armorSkills.strife ?? 0) > 0 && (armorSkills.dereliction ?? 0) > 0) {
+    return TRUE_ELEMENTS.has(weapon.elementType) ? 'Red' : 'Blue';
   }
   if ((armorSkills.dereliction ?? 0) > 0) {
     return TRUE_ELEMENTS.has(weapon.elementType) ? 'Red' : 'Blue';
@@ -473,6 +753,37 @@ function chooseBestRampageDeco(
   return ownedRamp?.id ?? '';
 }
 
+function scoreWeaponSubstitutionCandidate(
+  candidate: WeaponItem,
+  targetWeapon: WeaponItem
+): number {
+  let bonus = 0;
+  const targetTrueElem = TRUE_ELEMENTS.has(targetWeapon.elementType);
+  const candTrueElem = TRUE_ELEMENTS.has(candidate.elementType);
+  const targetStatus = STATUS_ELEMENTS.has(targetWeapon.elementType);
+  const candStatus = STATUS_ELEMENTS.has(candidate.elementType);
+
+  if (candidate.elementType === targetWeapon.elementType) {
+    bonus += 1000;
+  } else if (targetTrueElem && candTrueElem) {
+    bonus += 300;
+  } else if (targetStatus && candStatus) {
+    bonus += 300;
+  } else if (!targetTrueElem && !targetStatus && !candTrueElem) {
+    bonus += 400;
+  }
+
+  if (candidate.damageType === 'Shot' && targetWeapon.damageType === 'Shot') {
+    const tShot = inferShotSpecialty(targetWeapon);
+    const cShot = inferShotSpecialty(candidate);
+    if (tShot && cShot && tShot === cShot) {
+      bonus += 500;
+    }
+  }
+
+  return bonus + scoreWeaponForSelection(candidate);
+}
+
 export function evaluateOwnedBuildMatches(
   profile: HunterProfile,
   inventory: InventoryState,
@@ -487,6 +798,8 @@ export function evaluateOwnedBuildMatches(
   const ownedWeaponSet = new Set(inventory.ownedWeaponIds);
   const ownedArmorSet = new Set(inventory.ownedArmorIds);
   const ownedDecoSet = new Set(inventory.ownedDecoIds);
+  const ownedDecoCounts = inventory.ownedDecoCounts ?? {};
+  const hasDecoCounts = Object.keys(ownedDecoCounts).length > 0;
   const ownedRampageOrNormalDecos = DECORATIONS_DB.filter((d) =>
     ownedDecoSet.has(d.id)
   );
@@ -515,7 +828,7 @@ export function evaluateOwnedBuildMatches(
       const waist = getArmorById(template.loadout.waistId) ?? ARMOR_DB[0];
       const legs = getArmorById(template.loadout.legsId) ?? ARMOR_DB[0];
 
-      // Pull synced weapon: use template weapon if owned, otherwise substitute best owned weapon of same class
+      // Pull synced weapon: use template weapon if owned, otherwise substitute best matching owned weapon
       let adaptedWeapon = weapon;
       let weaponOwnedInBox = ownedWeaponSet.has(weapon.id);
       let substitutedWeapon = false;
@@ -523,7 +836,11 @@ export function evaluateOwnedBuildMatches(
       if (!weaponOwnedInBox) {
         const classOwnedWeapons = WEAPONS_DB.filter(
           (w) => w.weaponClass === template.weaponClass && ownedWeaponSet.has(w.id)
-        ).sort((a, b) => scoreWeaponForSelection(b) - scoreWeaponForSelection(a));
+        ).sort(
+          (a, b) =>
+            scoreWeaponSubstitutionCandidate(b, weapon) -
+            scoreWeaponSubstitutionCandidate(a, weapon)
+        );
 
         if (classOwnedWeapons.length > 0) {
           adaptedWeapon = classOwnedWeapons[0];
@@ -546,7 +863,7 @@ export function evaluateOwnedBuildMatches(
       const gearOwnershipPercent = Math.round((ownedGearCount / totalGearCount) * 100);
       const missingGearNames = gearChecks.filter((g) => !g.owned).map((g) => g.name);
 
-      // Count decorations slotted in template that exist in ownedDecoIds
+      // Count decorations slotted in template vs ownedDecoIds + ownedDecoCounts
       const templateDecoIds: string[] = [];
       Object.values(template.loadout.decorations).forEach((group) => {
         group.forEach((dId) => {
@@ -558,19 +875,28 @@ export function evaluateOwnedBuildMatches(
       }
 
       const totalDecoCount = templateDecoIds.length;
-      const ownedDecoCount = templateDecoIds.filter((id) =>
-        ownedDecoSet.has(id)
-      ).length;
+      let ownedDecoCount = 0;
+      const missingDecoSet = new Set<string>();
+      const remainingTemplateCounts: Record<string, number> = { ...ownedDecoCounts };
+
+      for (const id of templateDecoIds) {
+        if (!ownedDecoSet.has(id)) {
+          missingDecoSet.add(getDecorationById(id)?.name ?? id);
+        } else if (hasDecoCounts) {
+          if ((remainingTemplateCounts[id] ?? 0) > 0) {
+            ownedDecoCount++;
+            remainingTemplateCounts[id]--;
+          } else {
+            missingDecoSet.add(getDecorationById(id)?.name ?? id);
+          }
+        } else {
+          ownedDecoCount++;
+        }
+      }
+
       const decoOwnershipPercent =
         totalDecoCount === 0 ? 100 : Math.round((ownedDecoCount / totalDecoCount) * 100);
-
-      const missingDecoNames = Array.from(
-        new Set(
-          templateDecoIds
-            .filter((id) => !ownedDecoSet.has(id))
-            .map((id) => getDecorationById(id)?.name ?? id)
-        )
-      );
+      const missingDecoNames = Array.from(missingDecoSet);
 
       // Adapt template loadout with player's synced weapon, best owned talisman, and strictly owned decorations
       const bestOwnedTalisman = pickBestOwnedTalisman(inventory.talismans, adaptedWeapon);
@@ -592,12 +918,23 @@ export function evaluateOwnedBuildMatches(
         talismanToUse,
         ownedRampageOrNormalDecos,
         weights,
-        templateDecoIds
+        {
+          preferredDecoIds: templateDecoIds,
+          ownedDecoCounts,
+          includeCraftable: false,
+        }
       );
 
       const adaptedRampage = ownedDecoSet.has(template.loadout.rampageDecoId)
         ? template.loadout.rampageDecoId
         : chooseBestRampageDeco(adaptedWeapon, ownedDecoSet);
+
+      const armorSkills: Record<string, number> = {};
+      for (const piece of [helm, chest, arms, waist, legs]) {
+        for (const [sk, pts] of Object.entries(piece.skills)) {
+          armorSkills[sk] = (armorSkills[sk] ?? 0) + pts;
+        }
+      }
 
       const adaptedLoadout: BuildLoadout = {
         ...template.loadout,
@@ -607,11 +944,13 @@ export function evaluateOwnedBuildMatches(
         talisman: talismanToUse,
         rampageDecoId: adaptedRampage,
         decorations: adaptedDecos,
+        scrollMode: substitutedWeapon
+          ? chooseBestScrollMode(adaptedWeapon, armorSkills, talismanToUse)
+          : template.loadout.scrollMode,
         updatedAt: new Date().toISOString(),
       };
       const adaptedStats = calculateBuildStats(adaptedLoadout);
 
-      // Crafting summary against user's Material Box (for adapted loadout using synced weapon if owned)
       const crafting = calculateBuildCraftingSummary(adaptedLoadout, inventory);
       const missingMaterials = crafting.consolidatedMaterials
         .filter((m) => m.shortfall > 0)
@@ -680,12 +1019,24 @@ export function evaluateOwnedBuildMatches(
 
 function scoreArmorPieceForWeapon(
   piece: ArmorItem,
+  weapon: WeaponItem,
   weights: Record<string, number>
 ): number {
   let score = 0;
   for (const [sk, pts] of Object.entries(piece.skills)) {
-    score += (weights[sk] ?? 1.5) * pts;
+    const w = weights[sk] ?? 0;
+    score += w * pts;
   }
+
+  // Penalize pieces that conflict with non-Dragon elemental weapons (Dragonheart clears element)
+  if (
+    (piece.skills.dragonheart ?? 0) > 0 &&
+    TRUE_ELEMENTS.has(weapon.elementType) &&
+    weapon.elementType !== 'Dragon'
+  ) {
+    score -= 60;
+  }
+
   for (const slotLvl of piece.slots) {
     if (slotLvl === 4) score += 16;
     else if (slotLvl === 3) score += 11;
@@ -717,6 +1068,58 @@ function scoreWeaponForSelection(weapon: WeaponItem): number {
   );
 }
 
+function computeFunctionalUtilityBonus(
+  weapon: WeaponItem,
+  skills: Record<string, number>,
+  weights: Record<string, number>
+): number {
+  let bonus = 0;
+  const utilityKeys = [
+    'quick_sheathe',
+    'rapid_morph',
+    'horn_maestro',
+    'artillery',
+    'load_shells',
+    'focus',
+    'guard',
+    'guard_up',
+    'offensive_guard',
+    'wirebug_whisperer',
+    'wind_mantle',
+    'heaven_sent',
+    'masters_touch',
+    'protective_polish',
+    'razor_sharp',
+    'handicraft',
+    'recoil_down',
+    'reload_speed',
+    'spare_shot',
+    'ammo_up',
+    'bow_charge_plus',
+    'constitution',
+    'stamina_surge',
+    'evade_extender',
+    'evade_window',
+    'intrepid_heart',
+    'power_prolonger',
+    'slugger',
+    'embolden',
+    'berserk',
+  ];
+  for (const sk of utilityKeys) {
+    const lv = skills[sk] ?? 0;
+    const w = weights[sk] ?? 0;
+    if (lv > 0 && w > 0) {
+      bonus += lv * w * 1.4;
+    }
+  }
+  // Extra reward for Gunlance / CB artillery + load shells synergy
+  if (weapon.weaponClass === 'Gunlance') {
+    bonus += (skills.artillery ?? 0) * 18 + (skills.load_shells ?? 0) * 15;
+  }
+  return bonus;
+}
+
 export function synthesizeOwnedBoxBuilds(
   inventory: InventoryState,
   options?: {
@@ -732,6 +1135,7 @@ export function synthesizeOwnedBoxBuilds(
   const ownedWeaponSet = new Set(inventory.ownedWeaponIds);
   const ownedArmorSet = new Set(inventory.ownedArmorIds);
   const ownedDecoSet = new Set(inventory.ownedDecoIds);
+  const ownedDecoCounts = inventory.ownedDecoCounts ?? {};
   const materials = inventory.materials ?? {};
 
   const candidateWeapons = WEAPONS_DB.filter((w) => {
@@ -781,7 +1185,6 @@ export function synthesizeOwnedBoxBuilds(
     };
   }
 
-  // Pick top weapons per weapon class so every owned class gets strong representation
   const byClass = new Map<WeaponClass, WeaponItem[]>();
   for (const w of candidateWeapons) {
     const arr = byClass.get(w.weaponClass) ?? [];
@@ -814,34 +1217,51 @@ export function synthesizeOwnedBoxBuilds(
         source: 'Custom',
       };
 
-    // Rank top 4 armor pieces per slot for this specific weapon
+    // Rank top 5 armor pieces per slot strictly by relevant skills + slots
     const topSlotPieces: Record<ArmorSlot, ArmorItem[]> = {
       Helm: [...armorBySlot.Helm]
-        .sort((a, b) => scoreArmorPieceForWeapon(b, weights) - scoreArmorPieceForWeapon(a, weights))
-        .slice(0, 4),
+        .sort(
+          (a, b) =>
+            scoreArmorPieceForWeapon(b, weapon, weights) -
+            scoreArmorPieceForWeapon(a, weapon, weights)
+        )
+        .slice(0, 5),
       Chest: [...armorBySlot.Chest]
-        .sort((a, b) => scoreArmorPieceForWeapon(b, weights) - scoreArmorPieceForWeapon(a, weights))
-        .slice(0, 4),
+        .sort(
+          (a, b) =>
+            scoreArmorPieceForWeapon(b, weapon, weights) -
+            scoreArmorPieceForWeapon(a, weapon, weights)
+        )
+        .slice(0, 5),
       Arms: [...armorBySlot.Arms]
-        .sort((a, b) => scoreArmorPieceForWeapon(b, weights) - scoreArmorPieceForWeapon(a, weights))
-        .slice(0, 4),
+        .sort(
+          (a, b) =>
+            scoreArmorPieceForWeapon(b, weapon, weights) -
+            scoreArmorPieceForWeapon(a, weapon, weights)
+        )
+        .slice(0, 5),
       Waist: [...armorBySlot.Waist]
-        .sort((a, b) => scoreArmorPieceForWeapon(b, weights) - scoreArmorPieceForWeapon(a, weights))
-        .slice(0, 4),
+        .sort(
+          (a, b) =>
+            scoreArmorPieceForWeapon(b, weapon, weights) -
+            scoreArmorPieceForWeapon(a, weapon, weights)
+        )
+        .slice(0, 5),
       Legs: [...armorBySlot.Legs]
-        .sort((a, b) => scoreArmorPieceForWeapon(b, weights) - scoreArmorPieceForWeapon(a, weights))
-        .slice(0, 4),
+        .sort(
+          (a, b) =>
+            scoreArmorPieceForWeapon(b, weapon, weights) -
+            scoreArmorPieceForWeapon(a, weapon, weights)
+        )
+        .slice(0, 5),
     };
 
-    // Evaluate combinations across the top candidates (up to 4^5 = 1024 combos) using quick skill + slot heuristic
-    let bestCombo: {
-      Helm: ArmorItem;
-      Chest: ArmorItem;
-      Arms: ArmorItem;
-      Waist: ArmorItem;
-      Legs: ArmorItem;
-    } | null = null;
-    let bestComboScore = -Infinity;
+    // Evaluate combinations and collect top 6 candidates to verify with full stats & decos
+    type ComboCandidate = {
+      combo: Record<ArmorSlot, ArmorItem>;
+      heuristicScore: number;
+    };
+    const topCombos: ComboCandidate[] = [];
 
     for (const helm of topSlotPieces.Helm) {
       for (const chest of topSlotPieces.Chest) {
@@ -869,18 +1289,50 @@ export function synthesizeOwnedBoxBuilds(
                   (skillTotals[bestTalisman.skill2Id] ?? 0) + bestTalisman.skill2Level;
               }
 
+              const ctxWeights = refineWeightsForContext(
+                weights,
+                weapon,
+                skillTotals,
+                bestTalisman
+              );
+
               let skillScore = 0;
               for (const [sk, rawPts] of Object.entries(skillTotals)) {
                 const maxLv = getSkillById(sk)?.maxLevel ?? 7;
                 const cappedPts = Math.min(rawPts, maxLv);
-                const overcapPenalty = Math.max(0, rawPts - maxLv) * 3;
-                skillScore += cappedPts * (weights[sk] ?? 1.5) - overcapPenalty;
+                const overcapPenalty = Math.max(0, rawPts - maxLv) * 4;
+                skillScore += cappedPts * (ctxWeights[sk] ?? 0) - overcapPenalty;
+              }
+
+              // Anti-synergy penalties
+              if ((skillTotals.berserk ?? 0) > 0 && (skillTotals.dragon_conversion ?? 0) > 0) {
+                skillScore -= 140;
+              }
+              if (
+                (skillTotals.dragonheart ?? 0) > 0 &&
+                TRUE_ELEMENTS.has(weapon.elementType) &&
+                weapon.elementType !== 'Dragon'
+              ) {
+                skillScore -= 140;
+              }
+              if (
+                (skillTotals.blood_awakening ?? 0) > 0 &&
+                (skillTotals.blood_rite ?? 0) === 0
+              ) {
+                skillScore -= skillTotals.blood_awakening * 8;
               }
 
               const total = skillScore + slotScore;
-              if (total > bestComboScore) {
-                bestComboScore = total;
-                bestCombo = { Helm: helm, Chest: chest, Arms: arms, Waist: waist, Legs: legs };
+              if (
+                topCombos.length < 6 ||
+                total > topCombos[topCombos.length - 1].heuristicScore
+              ) {
+                topCombos.push({
+                  combo: { Helm: helm, Chest: chest, Arms: arms, Waist: waist, Legs: legs },
+                  heuristicScore: total,
+                });
+                topCombos.sort((a, b) => b.heuristicScore - a.heuristicScore);
+                if (topCombos.length > 6) topCombos.pop();
               }
             }
           }
@@ -888,53 +1340,92 @@ export function synthesizeOwnedBoxBuilds(
       }
     }
 
-    if (!bestCombo) continue;
+    if (topCombos.length === 0) continue;
 
-    const armorSkills: Record<string, number> = {};
-    for (const p of Object.values(bestCombo)) {
-      for (const [sk, pts] of Object.entries(p.skills)) {
-        armorSkills[sk] = (armorSkills[sk] ?? 0) + pts;
+    const rampageDecoId = chooseBestRampageDeco(weapon, allowedDecoSet);
+    const elemFactor =
+      weapon.weaponClass === 'Dual Blades' ||
+      weapon.weaponClass === 'Bow' ||
+      weapon.weaponClass === 'Charge Blade'
+        ? 1.85
+        : 1.15;
+
+    let bestEvaluated: {
+      combo: Record<ArmorSlot, ArmorItem>;
+      loadout: BuildLoadout;
+      stats: CalculatedBuildStats;
+      decorations: BuildLoadout['decorations'];
+      score: number;
+    } | null = null;
+
+    for (const candidate of topCombos) {
+      const armorSkills: Record<string, number> = {};
+      for (const p of Object.values(candidate.combo)) {
+        for (const [sk, pts] of Object.entries(p.skills)) {
+          armorSkills[sk] = (armorSkills[sk] ?? 0) + pts;
+        }
+      }
+
+      const scrollMode = chooseBestScrollMode(weapon, armorSkills, bestTalisman);
+      const decorations = slotOptimalDecorations(
+        weapon,
+        candidate.combo,
+        bestTalisman,
+        allowedDecos,
+        weights,
+        {
+          ownedDecoCounts,
+          includeCraftable,
+          materials,
+        }
+      );
+
+      const loadout: BuildLoadout = {
+        id: `box_opt_${weapon.id}`,
+        name: `${weapon.name} (Box Optimized)`,
+        weaponClass: weapon.weaponClass,
+        weaponId: weapon.id,
+        helmId: candidate.combo.Helm.id,
+        chestId: candidate.combo.Chest.id,
+        armsId: candidate.combo.Arms.id,
+        waistId: candidate.combo.Waist.id,
+        legsId: candidate.combo.Legs.id,
+        talisman: bestTalisman,
+        rampageDecoId,
+        decorations,
+        quriousWeapon: { ...EMPTY_Q_WEAPON },
+        quriousArmor: {
+          Helm: { ...EMPTY_ARMOR_AUGMENT },
+          Chest: { ...EMPTY_ARMOR_AUGMENT },
+          Arms: { ...EMPTY_ARMOR_AUGMENT },
+          Waist: { ...EMPTY_ARMOR_AUGMENT },
+          Legs: { ...EMPTY_ARMOR_AUGMENT },
+        },
+        scrollMode,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const stats = calculateBuildStats(loadout);
+      const utilityBonus = computeFunctionalUtilityBonus(weapon, stats.skills, weights);
+      const evalScore = Math.round(
+        stats.effectiveRaw + stats.effectiveElement * elemFactor + utilityBonus * 0.45
+      );
+
+      if (!bestEvaluated || evalScore > bestEvaluated.score) {
+        bestEvaluated = {
+          combo: candidate.combo,
+          loadout,
+          stats,
+          decorations,
+          score: evalScore,
+        };
       }
     }
 
-    const scrollMode = chooseBestScrollMode(weapon, armorSkills);
-    const decorations = slotOptimalDecorations(
-      weapon,
-      bestCombo,
-      bestTalisman,
-      allowedDecos,
-      weights
-    );
-    const rampageDecoId = chooseBestRampageDeco(weapon, allowedDecoSet);
+    if (!bestEvaluated) continue;
 
-    const loadout: BuildLoadout = {
-      id: `box_opt_${weapon.id}`,
-      name: `${weapon.name} (Box Optimized)`,
-      weaponClass: weapon.weaponClass,
-      weaponId: weapon.id,
-      helmId: bestCombo.Helm.id,
-      chestId: bestCombo.Chest.id,
-      armsId: bestCombo.Arms.id,
-      waistId: bestCombo.Waist.id,
-      legsId: bestCombo.Legs.id,
-      talisman: bestTalisman,
-      rampageDecoId,
-      decorations,
-      quriousWeapon: { ...EMPTY_Q_WEAPON },
-      quriousArmor: {
-        Helm: { ...EMPTY_ARMOR_AUGMENT },
-        Chest: { ...EMPTY_ARMOR_AUGMENT },
-        Arms: { ...EMPTY_ARMOR_AUGMENT },
-        Waist: { ...EMPTY_ARMOR_AUGMENT },
-        Legs: { ...EMPTY_ARMOR_AUGMENT },
-      },
-      scrollMode,
-      updatedAt: new Date().toISOString(),
-    };
+    const { combo: bestCombo, loadout, stats, decorations, score } = bestEvaluated;
 
-    const stats = calculateBuildStats(loadout);
-
-    // Count slots filled vs total
     const allSlots = [
       ...weapon.slots,
       ...bestCombo.Helm.slots,
@@ -949,7 +1440,6 @@ export function synthesizeOwnedBoxBuilds(
       .flat()
       .filter((id) => Boolean(id)).length;
 
-    // Track any unowned pieces included via Material Box craftability
     const craftablePieces: SynthesizedBoxBuild['craftablePieces'] = [];
     if (!ownedWeaponSet.has(weapon.id)) {
       const rec = getEquipmentRecipe('weapon', weapon.id);
@@ -979,18 +1469,9 @@ export function synthesizeOwnedBoxBuilds(
       }
     }
 
-    const elemFactor =
-      weapon.weaponClass === 'Dual Blades' ||
-      weapon.weaponClass === 'Bow' ||
-      weapon.weaponClass === 'Charge Blade'
-        ? 1.85
-        : 1.15;
-    const score = Math.round(
-      stats.effectiveRaw + stats.effectiveElement * elemFactor + bestComboScore * 0.25
-    );
-
     const topSkills = Object.entries(stats.skills)
-      .sort((a, b) => (weights[b[0]] ?? 1) * b[1] - (weights[a[0]] ?? 1) * a[1])
+      .filter(([sk]) => (weights[sk] ?? 0) > 0)
+      .sort((a, b) => (weights[b[0]] ?? 0) * b[1] - (weights[a[0]] ?? 0) * a[1])
       .slice(0, 6)
       .map(([sk, lv]) => `${getSkillById(sk)?.name ?? sk} ${lv}`);
 

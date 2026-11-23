@@ -21,6 +21,7 @@ import {
 import { getSkillDisplayName, RANK_TIERS } from '../engine/damageCalculator';
 import {
   evaluateOwnedBuildMatches,
+  getSkillWeightsForWeapon,
   OwnedReadiness,
   OwnedTemplateMatch,
   synthesizeOwnedBoxBuilds,
@@ -562,9 +563,14 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {filteredMatches.map((match: OwnedTemplateMatch) => {
-                const { template, adaptedStats, bestOwnedTalisman } = match;
+                const { template, adaptedStats, adaptedWeapon, bestOwnedTalisman } = match;
+                const skillWeights = getSkillWeightsForWeapon(adaptedWeapon);
                 const coreSkills = Object.entries(adaptedStats.skills)
-                  .sort((a, b) => b[1] - a[1])
+                  .filter(([sk]) => (skillWeights[sk] ?? 0) > 0)
+                  .sort(
+                    (a, b) =>
+                      (skillWeights[b[0]] ?? 0) * b[1] - (skillWeights[a[0]] ?? 0) * a[1]
+                  )
                   .slice(0, 5)
                   .map(([sk, lv]) => `${getSkillDisplayName(sk)} ${lv}`);
 

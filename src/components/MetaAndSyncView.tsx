@@ -35,6 +35,7 @@ import {
   getUnlockedIdsForRank,
   RANK_TIERS,
 } from '../engine/damageCalculator';
+import { getSkillWeightsForWeapon } from '../engine/ownedBuildOptimizer';
 import {
   BuildLoadout,
   HunterProfile,
@@ -740,8 +741,13 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
               const { template, stats, rankEligible, ownershipPercent, ownedCount, totalPieces, missingItems } =
                 rec;
               const weaponItem = getWeaponById(template.loadout.weaponId);
+              const skillWeights = weaponItem ? getSkillWeightsForWeapon(weaponItem) : {};
               const topSkills = Object.entries(stats.skills)
-                .sort((a, b) => b[1] - a[1])
+                .filter(([skillId]) => !weaponItem || (skillWeights[skillId] ?? 0) > 0)
+                .sort(
+                  (a, b) =>
+                    (skillWeights[b[0]] ?? 1) * b[1] - (skillWeights[a[0]] ?? 1) * a[1]
+                )
                 .slice(0, 5)
                 .map(([skillId, lv]) => `${getSkillDisplayName(skillId)} ${lv}`);
 

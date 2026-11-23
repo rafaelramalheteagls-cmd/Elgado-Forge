@@ -266,23 +266,38 @@ function indexEquipAliases(map: Map<string, string>, rawName: string, id: string
     if (/Primordial/i.test(v)) {
       variants.add(v.replace(/Primordial/gi, 'Primal'));
     }
-    if (/^Abyssal Gale\s/i.test(v)) {
-      variants.add(v.replace(/^Abyssal Gale\b/i, 'Tempestuous'));
-    }
-    if (/^Crimson\s/i.test(v)) {
-      variants.add(v.replace(/^Crimson\b/i, 'Red Skies'));
-    }
     if (/^Fine Kamura\s/i.test(v)) {
       variants.add(v.replace(/^Fine Kamura\b/i, 'Kamura'));
       variants.add(v.replace(/^Fine Kamura\b/i, 'Kamura Legacy'));
       variants.add(v.replace(/^Fine Kamura\b/i, 'Kamura Heirloom'));
     }
-    if (v === 'Abyssal Wing') variants.add('Abyssal Wing Greatsword');
-    if (v === 'Epochal Greatsword') variants.add('Primordial Greatsword');
+    if (/^Royal Order's\s/i.test(v) && !v.endsWith('+')) {
+      variants.add(`${v}+`);
+    }
+    if (v === "Duke's Claymore") variants.add('Decapitator Schneiden');
+    if (v === "Duke's Sinclair") variants.add('Fissureforce');
+    if (v === "Duke's Bayonet") variants.add('Scorched Schleien');
+    if (v === "Duke's Grail") variants.add("Magician's Allure");
+    if (v === "Duke's Scepter") variants.add('Whiplash Stock');
+    if (v === "Duke's Arquebus") variants.add('Vigil Kugel');
+    if (v === 'Dirty Marquis+') variants.add('Dirty Graf');
+    if (v === 'Shieldraad+') variants.add('Armordraad');
+    if (v === 'Longear Weiss+') variants.add('Splitear Weiss');
+    if (v === "Daimyo's Warbow+") variants.add('Chelae Warbow');
+    if (v === 'Kurenawi Kunpuu+') variants.add('Kurenawi Ougi+');
+    if (v === "Teostra's Medal") {
+      variants.add("Teostra's Emblem+");
+      variants.add("Teostra's Emblem");
+    }
+    if (v === 'Abyssal Eruption') variants.add('Abyssal Wing');
+    if (v === 'Silver Sunderer') variants.add('Epochal Greatsword');
     if (v === 'Silver Prominence') variants.add('Silver Lance');
-    if (v === 'Tormented Soul Horn') variants.add('Teostra / Scorned Bell');
+    if (v === "Devil's Lute") variants.add('Tormented Soul Horn');
     if (v === 'Fine Kamura Cleaver') variants.add('Kamura Cleaver');
-    if (v === 'Fine Kamura Heirloom') variants.add('Kamura Heirloom Blade');
+    if (v === 'Fine Kamura Rapier') {
+      variants.add('Fine Kamura Heirloom');
+      variants.add('Kamura Heirloom Blade');
+    }
     if (/greatsword/i.test(v)) {
       variants.add(v.replace(/greatsword/gi, 'Great Sword'));
     }
