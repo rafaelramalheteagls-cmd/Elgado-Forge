@@ -26,6 +26,11 @@ export const CRAFTING_CATEGORY_MATERIALS: Record<string, Array<{ name: string; p
 const materialNames: Record<string, string> = catalog.materialNames;
 const categoryNames: Record<string, Record<string, string>> = catalog.materialCategoryNames;
 
+function getWeaponTreeMr(id: string): number {
+  const progress = sourceWeaponsById.get(id)?.treeProgress?.masterRank;
+  return progress && typeof progress === 'object' ? progress.MasterRankProgress ?? 0 : 0;
+}
+
 export function getWeaponCraftingOptions(id: string) {
   const weapon = sourceWeaponsById.get(id);
   return (weapon?.crafting ?? []).flatMap(recipe => {
@@ -51,7 +56,7 @@ export function getWeaponCraftingOptions(id: string) {
       label: recipe.kind === 'product' ? 'Forge' : `Upgrade from ${weapon?.craftingPredecessor}`,
       kind: recipe.kind,
       predecessorId: recipe.kind === 'process' ? sourceWeaponIdByName.get(weapon?.craftingPredecessor ?? '') : undefined,
-      minMr: recipe.minCraftingMr,
+      minMr: Math.max(getWeaponTreeMr(id), recipe.minCraftingMr),
       materials,
       unlock: recipe.unlock,
       zenny: getWeaponCraftingZenny(weapon?.sourceDetails, recipe.kind),
@@ -193,16 +198,13 @@ export const MHRICE_WEAPONS_DB: WeaponItem[] = (data.weaponClasses as AnyRecord[
       affinity: Number(w.affinity) || 0,
       defenseBonus: Number(w.defenseBonus) || 0,
       sharpness: sharp,
-      // Handicraft gauge-extension values are preserved below; the current app's
-      // simplified sharpness model cannot represent the full seven-color gauge.
-      handicraftBonusSharpness: undefined,
-      handicraftThreshold: undefined,
       slots,
       rampageSlot,
       damageType: weaponDamageType(cls),
       unlockNote: `MHRice progression flag(s): ${(w.craftingProgressFlags ?? []).join(', ') || 'not specified in source'}`,
       sourceId: w.sourceId,
       sourceSharpnessGauge: gauge,
+      sourceHandicraftExtension: w.handicraft ?? [],
       sourceSlots: w.slots,
       sourceRampageSlots: rampageSlots,
       sourceProgression: { ...(w.treeProgress ?? {}), craftingProgressFlags: w.craftingProgressFlags ?? [] },
@@ -335,7 +337,46 @@ export function getEquipmentCraftingUnlock(id: string) {
 }
 
 export function getMinimumCraftingMr(id: string) {
-  return equipmentCraftingMrById.get(id) ?? 0;
+  return Math.max(getWeaponTreeMr(id), equipmentCraftingMrById.get(id) ?? 0);
+}
+
+// Minimum ranks to post the corresponding regular quests. Investigations and
+// multiplayer can provide different paths, so the rank alone is not proof of a clear.
+// https://prtimes.jp/main/html/rd/p/000003305.000013450.html
+// https://prtimes.jp/main/html/rd/p/000003431.000013450.html
+// https://prtimes.jp/main/html/rd/p/000003567.000013450.html
+// https://prtimes.jp/main/html/rd/p/000003710.000013450.html
+const RISEN_QUEST_MR: Readonly<Record<string, number>> = {
+  'Risen Chameleos': 110,
+  'Risen Kushala Daora': 120,
+  'Risen Teostra': 140,
+  'Risen Crimson Glow Valstrax': 160,
+  'Risen Shagaru Magala': 180,
+};
+
+export function getEquipmentProgression(
+  item: WeaponItem | ArmorItem | DecorationItem,
+  mr: number,
+  ar: number,
+  materials: Readonly<Record<string, number>> = {},
+): 'confirmed' | 'locked' | 'unverified' {
+  if (Math.max(item.minMr, getMinimumCraftingMr(item.id)) > mr || ('minAr' in item && item.minAr > ar)) return 'locked';
+  const routes = 'weaponClass' in item
+    ? getWeaponCraftingOptions(item.id).map(option => ({ mr: option.minMr, unlock: option.unlock }))
+    : equipmentCraftingZennyById.has(item.id)
+      ? [{ mr: getMinimumCraftingMr(item.id), unlock: getEquipmentCraftingUnlock(item.id) ?? [] }]
+      : [];
+  if (!routes.length) return 'unverified';
+  let unverified = false;
+  for (const route of routes) {
+    if (route.mr > mr) continue;
+    if (ar === 0 && route.unlock.some(label => (RISEN_QUEST_MR[label.replace(/^Key monster: /, '')] ?? 0) > mr)) continue;
+    if (route.unlock.every(label => /^MR \d+★$/.test(label)
+      || (label.startsWith('Key item: ') && (materials[label.slice(10)] ?? 0) > 0)
+      || (mr > 0 && /^(?:Hub \d+★|Low Rank|High Rank)$/.test(label)))) return 'confirmed';
+    unverified = true;
+  }
+  return unverified ? 'unverified' : 'locked';
 }
 
 export function getDecorationCraftingMaterials(id: string) {

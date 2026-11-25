@@ -44,10 +44,6 @@ const RANK_TIERS: Array<'All' | RankTier> = [
   'LR',
   'HR',
   'MR',
-  'Early MR',
-  'Story MR',
-  'MR 10+',
-  'Endgame AR',
 ];
 
 export const EquipmentDrawer: React.FC<EquipmentDrawerProps> = ({
@@ -385,7 +381,7 @@ export const EquipmentDrawer: React.FC<EquipmentDrawerProps> = ({
                         <span aria-hidden="true">·</span>
                         <span>Ramp Lv{w.rampageSlot}</span>
                       </div>
-                      <SharpnessBar sharpness={w.sharpness} compact />
+                      <SharpnessBar sharpness={w.sharpness} gauge={w.sourceSharpnessGauge?.length ? w.sourceSharpnessGauge : undefined} compact />
                     </div>
                     <div className="mt-1 flex items-center gap-2 text-[11px] text-[#667085]">
                       <span>{w.rankTier}</span>

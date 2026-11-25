@@ -74,6 +74,7 @@ interface MetaAndSyncViewProps {
 }
 
 const SMITHY_BANNER_URL = '/src/assets/images/elgado_smithy_banner_1795219159176.jpg';
+const SELECTABLE_ARMOR = ARMOR_DB.filter(armor => armor.isSelectable !== false);
 
 export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
   profile,
@@ -570,6 +571,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
 
   const ownedWeaponSet = new Set(inventory.ownedWeaponIds);
   const ownedArmorSet = new Set(inventory.ownedArmorIds);
+  const ownedSelectableArmorCount = SELECTABLE_ARMOR.filter(armor => ownedArmorSet.has(armor.id)).length;
   const ownedDecoSet = new Set(inventory.ownedDecoIds);
 
   return (
@@ -739,7 +741,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {recommendations.map((rec) => {
-              const { template, stats, rankEligible, ownershipPercent, ownedCount, totalPieces, missingItems, missingDecorations } =
+              const { template, stats, rankEligible, progressionUnverified, ownershipPercent, ownedCount, totalPieces, missingItems, missingDecorations } =
                 rec;
               const weaponItem = getWeaponById(template.loadout.weaponId);
               const skillWeights = weaponItem ? getSkillWeightsForWeapon(weaponItem) : {};
@@ -786,6 +788,12 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                     <p className="mt-2 text-xs leading-relaxed text-[#98A2B3]">
                       {template.summary}
                     </p>
+                    {template.omittedDecorations.length > 0 && (
+                      <details className="mt-2 text-[11px] text-[#98A2B3]">
+                        <summary className="cursor-pointer">Legacy decorations left out · {template.omittedDecorations.length}</summary>
+                        <p className="mt-1">{[...new Set(template.omittedDecorations)].join(' · ')}</p>
+                      </details>
+                    )}
 
                     {weaponItem && (
                       <p className="mt-2 text-[11px] text-[#ECEFF4]">
@@ -809,10 +817,10 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                         <span className="block text-[11px] text-[#667085]">Rank Match</span>
                         <span
                           className={`font-medium ${
-                            rankEligible ? 'text-emerald-400' : 'text-amber-400'
+                            rankEligible && !progressionUnverified ? 'text-emerald-400' : 'text-amber-400'
                           }`}
                         >
-                          {rankEligible ? 'Unlocked' : 'Above Current Rank'}
+                          {!rankEligible ? 'Above Current Rank' : progressionUnverified ? 'Verify Smithy Unlocks' : 'Rank Requirements Met'}
                         </span>
                       </div>
                       <div>
@@ -1637,12 +1645,12 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
               const filteredArmor =
                 invTypeFilter === 'weapons' || invTypeFilter === 'decorations'
                   ? []
-                  : ARMOR_DB.filter(
+                  : SELECTABLE_ARMOR.filter(
                       (a) =>
-                        a.isSelectable !== false && (!q ||
+                        !q ||
                         a.name.toLowerCase().includes(q) ||
                         a.variantLabel?.toLowerCase().includes(q) ||
-                        a.slot.toLowerCase().includes(q))
+                        a.slot.toLowerCase().includes(q)
                     );
               const filteredDecos =
                 invTypeFilter === 'weapons' || invTypeFilter === 'armor'
@@ -1730,12 +1738,12 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                     <div>
                       <h2 className="font-display text-base font-semibold text-[#ECEFF4]">
                         Owned Equipment Inventory (
-                        {ownedWeaponSet.size + ownedArmorSet.size + ownedDecoSet.size} /{' '}
-                        {WEAPONS_DB.length + ARMOR_DB.length + DECORATIONS_DB.length})
+                        {ownedWeaponSet.size + ownedSelectableArmorCount + ownedDecoSet.size} /{' '}
+                        {WEAPONS_DB.length + SELECTABLE_ARMOR.length + DECORATIONS_DB.length})
                       </h2>
                       <p className="font-mono-tabular text-[11px] text-[#98A2B3]">
                         Weapons {ownedWeaponSet.size}/{WEAPONS_DB.length} · Armor{' '}
-                        {ownedArmorSet.size}/{ARMOR_DB.length} · Decorations{' '}
+                        {ownedSelectableArmorCount}/{SELECTABLE_ARMOR.length} · Decorations{' '}
                         {ownedDecoSet.size}/{DECORATIONS_DB.length}
                       </p>
                     </div>
@@ -1754,7 +1762,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                         [
                           { id: 'all', label: 'All Gear' },
                           { id: 'weapons', label: `Weapons (${ownedWeaponSet.size})` },
-                          { id: 'armor', label: `Armor (${ownedArmorSet.size})` },
+                          { id: 'armor', label: `Armor (${ownedSelectableArmorCount})` },
                           { id: 'decorations', label: `Decorations (${ownedDecoSet.size})` },
                         ] as const
                       ).map((tab) => (
@@ -1929,7 +1937,10 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                 <button
                   key={cat.id}
                   type="button"
-                  onClick={() => setDbType(cat.id)}
+                  onClick={() => {
+                    setDbType(cat.id);
+                    if (cat.id === 'decorations' && dbRank === 'LR') setDbRank('');
+                  }}
                   className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                     dbType === cat.id
                       ? 'bg-[#D4A853] text-[#0B0D10]'
@@ -1990,7 +2001,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                   className="rounded-lg border border-white/15 bg-[#0B0D10] px-2.5 py-1.5 text-xs text-[#ECEFF4]"
                 >
                   <option value="">All Rank Tiers</option>
-                  {(['HR', 'Early MR', 'Story MR', 'MR 10+', 'Endgame AR'] as const).map((rt) => (
+                  {(dbType === 'decorations' ? ['HR', 'MR'] : ['LR', 'HR', 'MR']).map((rt) => (
                     <option key={rt} value={rt}>
                       {rt}
                     </option>

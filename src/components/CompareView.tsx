@@ -3,7 +3,6 @@ import { ArrowRight, Check, Trophy } from 'lucide-react';
 import {
   getSkillById,
   getWeaponById,
-  META_BUILD_TEMPLATES,
   MONSTERS_DB,
   WEAPON_COMBOS_DB,
 } from '../data/sunbreakDb';
@@ -14,7 +13,10 @@ import {
   simulateTrainingDps,
   resolveMechanicsWeapon,
   resolveRecommendationInventory,
+  preferOwnedArmorVariants,
+  RECOMMENDATION_TEMPLATES,
 } from '../engine/damageCalculator';
+import { optimizeTemplateTalisman } from '../engine/ownedBuildOptimizer';
 import { estimateGunlanceFullBurst } from '../data/weaponMechanics';
 import { createCraftingPlanner, summarizeCraftingForecast } from '../engine/craftingPlanner';
 import { BuildLoadout, InventoryState } from '../types/sunbreak';
@@ -41,17 +43,20 @@ export const CompareView: React.FC<CompareViewProps> = ({
     for (const b of savedBuilds) map.set(b.id, b);
     map.set(activeBuild.id, activeBuild);
     if (comparisonBuild) map.set(comparisonBuild.id, comparisonBuild);
-    for (const t of META_BUILD_TEMPLATES) {
+    const box = resolveRecommendationInventory(inventory);
+    for (const t of RECOMMENDATION_TEMPLATES) {
       if (!map.has(t.id)) {
-        map.set(t.id, {
+        const base = preferOwnedArmorVariants({
           ...t.loadout,
           id: t.id,
-          updatedAt: new Date().toISOString(),
-        });
+          updatedAt: '',
+        }, box.ownedArmorIds);
+        const weapon = getWeaponById(base.weaponId);
+        map.set(t.id, weapon ? optimizeTemplateTalisman(base, weapon, box) : base);
       }
     }
     return Array.from(map.values());
-  }, [activeBuild, savedBuilds, comparisonBuild]);
+  }, [activeBuild, savedBuilds, comparisonBuild, inventory]);
 
   const [selectedIds, setSelectedIds] = useState<string[]>(() => {
     const defaults = [activeBuild.id];

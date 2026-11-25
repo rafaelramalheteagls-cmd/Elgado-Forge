@@ -12,9 +12,10 @@ import {
   WEAPON_COMBOS_DB,
   WEAPONS_DB,
 } from '../data/sunbreakDb';
-import { AFFINITY_SKILL_EFFECTS, getMinimumCraftingMr } from '../data/mhriceAdapter';
+import { AFFINITY_SKILL_EFFECTS, getEquipmentProgression } from '../data/mhriceAdapter';
 import { elementExploitMultiplier, estimateChargeBladeSaedPhials, estimateGunlanceFullBurst, getBowgunMagazineCycleSeconds, getBowShotProfile, getPrimaryBowgunAmmo, getRecommendedShot, sneakAttackMultiplier, supportsOffensiveGuard } from '../data/weaponMechanics';
 import {
+  ArmorItem,
   ArmorSlot,
   BuildLoadout,
   CalculatedBuildStats,
@@ -171,10 +172,37 @@ const LEGACY_ARMOR_SOURCE_IDS = new Map([
   ['waist_violet_mizu', 'armor:waist:394'],
   ['chest_risen_mizuha', 'armor:chest:491'],
 ]);
-const catalogArmorId = (id: string) => uniqueCatalogMatch(
-  ARMOR_DB, getArmorById(LEGACY_ARMOR_SOURCE_IDS.get(id) ?? id), (a, b) => a.slot === b.slot
-);
-const catalogDecoId = (id: string) => uniqueCatalogMatch(DECORATIONS_DB, getDecorationById(id),
+function catalogArmorId(id: string) {
+  const item = getArmorById(LEGACY_ARMOR_SOURCE_IDS.get(id) ?? id);
+  const exact = uniqueCatalogMatch(ARMOR_DB, item, (a, b) => a.slot === b.slot);
+  if (exact || !item) return exact;
+  const variants = ARMOR_DB.filter(candidate => candidate.name === item.name && candidate.slot === item.slot);
+  return variants.length === 2 && areEquivalentArmorVariants(variants[0], variants[1]) ? variants[0].id : undefined;
+}
+
+function areEquivalentArmorVariants(a: ArmorItem, b: ArmorItem): boolean {
+  const maleFemale = (a.variantLabel === 'Male only' && b.variantLabel === 'Female only')
+    || (a.variantLabel === 'Female only' && b.variantLabel === 'Male only');
+  return maleFemale && a.name === b.name && a.slot === b.slot && a.rankTier === b.rankTier && a.rarity === b.rarity
+    && a.defense === b.defense && a.slots.every((size, index) => size === b.slots[index])
+    && Object.keys(a.skills).length === Object.keys(b.skills).length
+    && Object.entries(a.skills).every(([id, level]) => b.skills[id] === level)
+    && Object.entries(a.resistances).every(([element, level]) => b.resistances[element as keyof ArmorItem['resistances']] === level);
+}
+
+export function preferOwnedArmorVariants(loadout: BuildLoadout, ownedArmorIds: readonly string[]): BuildLoadout {
+  const ownedIds = new Set(ownedArmorIds);
+  const next = { ...loadout };
+  for (const [, , key] of ARMOR_LOADOUT_SLOTS) {
+    const item = getArmorById(loadout[key]);
+    if (!item?.variantLabel || ownedIds.has(item.id)) continue;
+    const variant = ARMOR_DB.find(candidate => ownedIds.has(candidate.id) && areEquivalentArmorVariants(item, candidate));
+    if (variant) next[key] = variant.id;
+  }
+  return next;
+}
+
+const catalogDecoId = (id: string) => id === 'ramp_anti_fanged' ? 'rampage-deco:27' : uniqueCatalogMatch(DECORATIONS_DB, getDecorationById(id),
   (a, b) => a.slotLevel === b.slotLevel && Boolean(a.isRampage) === Boolean(b.isRampage));
 
 export const EMPTY_RECOMMENDATION_TALISMAN: TalismanItem = {
@@ -219,16 +247,40 @@ export const RECOMMENDATION_TEMPLATES = META_BUILD_TEMPLATES.flatMap((template) 
     talisman: EMPTY_RECOMMENDATION_TALISMAN,
   };
   const slots = resolveDecorationSlots(loadout);
-  const decorations = { ...loadout.decorations };
-  for (const key of Object.keys(slots) as Array<keyof typeof slots>) {
-    decorations[key] = decorations[key].map((id, index) => {
-      const resolved = id ? catalogDecoId(id) : undefined;
-      return resolved && decorationFits(resolved, slots[key][index] ?? 0) ? resolved : '';
-    });
+  const keys = ['weapon', 'helm', 'chest', 'arms', 'waist', 'legs'] as const;
+  const decorations = { ...loadout.decorations, talisman: [] };
+  const availableSlots = keys.flatMap(key => {
+    decorations[key] = slots[key].map(() => '');
+    return slots[key].map((size, index) => ({ key, index, size }));
+  }).filter(slot => slot.size > 0).sort((a, b) => a.size - b.size);
+  const omittedDecorations: string[] = [];
+  const jewels = keys.flatMap(key => original.decorations[key].flatMap((id, index) => {
+    if (!id) return [];
+    const resolved = catalogDecoId(id);
+    return [{ key, index, id, deco: resolved ? getDecorationById(resolved) : undefined }];
+  })).sort((a, b) => (b.deco?.slotLevel ?? 0) - (a.deco?.slotLevel ?? 0));
+  for (const jewel of jewels) {
+    if (!jewel.deco || jewel.deco.isRampage) {
+      omittedDecorations.push(getDecorationById(jewel.id)?.name ?? jewel.id);
+      continue;
+    }
+    const deco = jewel.deco;
+    // Prefer the original position only when it costs no larger slot.
+    const smallest = availableSlots.find(slot => slot.size >= deco.slotLevel);
+    if (!smallest) {
+      omittedDecorations.push(deco.name);
+      continue;
+    }
+    const destination = availableSlots.find(slot => slot.size === smallest.size && slot.key === jewel.key && slot.index === jewel.index) ?? smallest;
+    decorations[destination.key][destination.index] = deco.id;
+    availableSlots.splice(availableSlots.indexOf(destination), 1);
   }
   const rampage = catalogDecoId(original.rampageDecoId);
   const rampageDecoId = rampage && rampageDecorationFits(rampage, getWeaponById(weaponId), original.quriousWeapon?.extraSlotLevel) ? rampage : '';
-  return [{ ...template, loadout: { ...loadout, decorations, rampageDecoId } }];
+  if (original.rampageDecoId && !rampageDecoId) {
+    omittedDecorations.push(getDecorationById(original.rampageDecoId)?.name ?? original.rampageDecoId);
+  }
+  return [{ ...template, omittedDecorations, loadout: { ...loadout, decorations, rampageDecoId } }];
 });
 
 export function aggregateBuildSkills(loadout: BuildLoadout): {
@@ -307,6 +359,33 @@ export function resolveSharpness(
     return SHARPNESS_ORDER[Math.min(SHARPNESS_ORDER.length - 1, idx + 1)];
   }
   return weaponSharpness;
+}
+
+// MHRice draws extension segment zero at the highest color of the base gauge.
+// https://github.com/wwylele/mhrice/blob/main/src/extract/gen_weapon.rs#L267-L298
+export function resolveWeaponSharpness(weapon: WeaponItem, handicraftLevel: number, quriousBoost = false) {
+  const base = weapon.sourceSharpnessGauge;
+  if (weapon.damageType === 'Shot') return { tier: weapon.sharpness };
+  if (!base?.some(points => points > 0) || !weapon.sourceHandicraftExtension) {
+    return {
+      tier: resolveSharpness(weapon.sharpness, handicraftLevel, weapon.handicraftBonusSharpness,
+        weapon.handicraftThreshold, quriousBoost),
+    };
+  }
+  const gauge = [...base];
+  const baseColor = SHARPNESS_ORDER.indexOf(weapon.sharpness);
+  let tier = weapon.sharpness;
+  let budget = Math.min(5, Math.max(0, Math.trunc(handicraftLevel))) * 10 + (quriousBoost ? 10 : 0);
+  for (const [index, points] of weapon.sourceHandicraftExtension.entries()) {
+    const color = baseColor + index;
+    const extension = Math.min(points, budget);
+    if (extension > 0 && color < SHARPNESS_ORDER.length) {
+      gauge[color] = (gauge[color] ?? 0) + extension;
+      tier = SHARPNESS_ORDER[color];
+    }
+    budget -= extension;
+  }
+  return { tier, gauge };
 }
 
 export function calculateBuildStats(
@@ -582,16 +661,9 @@ export function calculateBuildStats(
   );
 
   // Sharpness
-  const sharpness =
-    weapon.damageType === 'Shot'
-      ? weapon.sharpness
-      : resolveSharpness(
-          weapon.sharpness,
-          skills['handicraft'] ?? 0,
-          weapon.handicraftBonusSharpness,
-          weapon.handicraftThreshold ?? 2,
-          loadout.quriousWeapon?.sharpnessBoost
-        );
+  const { tier: sharpness, gauge: sharpnessGauge } = resolveWeaponSharpness(
+    weapon, skills.handicraft ?? 0, loadout.quriousWeapon?.sharpnessBoost,
+  );
   const sharpMods =
     weapon.damageType === 'Shot'
       ? { raw: 1.0, elem: 1.0 }
@@ -723,6 +795,7 @@ export function calculateBuildStats(
     critMultiplier,
     sharpness,
     sharpnessRawMod: sharpMods.raw,
+    sharpnessGauge,
     sharpnessElemMod: sharpMods.elem,
     defense,
     resistances,
@@ -948,9 +1021,10 @@ export function simulateTrainingDps(
 }
 
 export interface EvaluatedMetaBuild {
-  template: MetaBuildTemplate;
+  template: MetaBuildTemplate & { omittedDecorations: string[] };
   stats: CalculatedBuildStats;
   rankEligible: boolean;
+  progressionUnverified: boolean;
   ownershipPercent: number;
   ownedCount: number;
   totalPieces: number;
@@ -994,10 +1068,17 @@ export function calculateBuildCraftingSummary(loadout: BuildLoadout, inventory: 
   return { totalGearCount: equipped.length, ownedGearCount: equipped.length - missingGear.length, pieceBreakdowns };
 }
 
-export function canCraftMissingEquipmentAtMr(loadout: BuildLoadout, inventory: InventoryState, mr: number): boolean {
-  return calculateBuildCraftingSummary(loadout, inventory).pieceBreakdowns.every(
-    ({ itemId }) => getMinimumCraftingMr(itemId) <= mr,
-  );
+export function getMissingEquipmentProgression(
+  pieces: readonly { itemId: string }[], inventory: InventoryState, mr: number, ar: number,
+) {
+  let hasUnverified = false;
+  for (const { itemId } of pieces) {
+    const item = getWeaponById(itemId) ?? getArmorById(itemId) ?? getDecorationById(itemId);
+    const status = item ? getEquipmentProgression(item, mr, ar, inventory.materials) : 'unverified';
+    if (status === 'locked') return 'locked';
+    if (status === 'unverified') hasUnverified = true;
+  }
+  return hasUnverified ? 'unverified' : 'confirmed';
 }
 
 export function evaluateMetaRecommendations(
@@ -1020,29 +1101,30 @@ export function evaluateMetaRecommendations(
   return templates
     .map((template) => {
       const weapon = getWeaponById(template.loadout.weaponId);
-      const base: BuildLoadout = {
+      const base = preferOwnedArmorVariants({
         ...template.loadout,
         talisman: EMPTY_RECOMMENDATION_TALISMAN,
         id: template.id,
         updatedAt: new Date().toISOString(),
-      };
+      }, inventory.ownedArmorIds);
       const fullLoadout = weapon && optimizeTalisman ? optimizeTalisman(base, weapon, inventory) : base;
       const stats = calculateBuildStats(fullLoadout);
       const crafting = calculateBuildCraftingSummary(fullLoadout, inventory);
+      const progression = getMissingEquipmentProgression(crafting.pieceBreakdowns, inventory, profile.mr, profile.ar);
       const rankEligible =
         profile.mr >= template.minMr && profile.ar >= template.minAr
-        && crafting.pieceBreakdowns.every(({ itemId }) => getMinimumCraftingMr(itemId) <= profile.mr);
+        && progression !== 'locked';
       const missingDecorations = crafting.pieceBreakdowns
         .filter(piece => piece.slotLabel === 'Decoration')
         .map(piece => `${piece.itemName} ×${piece.missingCopies}`);
 
       const requiredGearIds = [
         template.loadout.weaponId,
-        template.loadout.helmId,
-        template.loadout.chestId,
-        template.loadout.armsId,
-        template.loadout.waistId,
-        template.loadout.legsId,
+        base.helmId,
+        base.chestId,
+        base.armsId,
+        base.waistId,
+        base.legsId,
       ];
 
       const ownedSet = new Set([
@@ -1083,6 +1165,7 @@ export function evaluateMetaRecommendations(
         template: { ...template, loadout: fullLoadout },
         stats,
         rankEligible,
+        progressionUnverified: rankEligible && progression === 'unverified',
         ownershipPercent,
         ownedCount,
         totalPieces: requiredGearIds.length,
@@ -1111,13 +1194,13 @@ export function getUnlockedIdsForRank(mr: number, ar: number): {
   decoIds: string[];
 } {
   return {
-    weaponIds: WEAPONS_DB.filter((w) => Math.max(w.minMr, getMinimumCraftingMr(w.id)) <= mr && w.minAr <= ar).map(
+    weaponIds: WEAPONS_DB.filter((w) => getEquipmentProgression(w, mr, ar) === 'confirmed').map(
       (w) => w.id
     ),
-    armorIds: ARMOR_DB.filter((a) => a.isSelectable !== false && Math.max(a.minMr, getMinimumCraftingMr(a.id)) <= mr && a.minAr <= ar).map(
+    armorIds: ARMOR_DB.filter((a) => a.isSelectable !== false && getEquipmentProgression(a, mr, ar) === 'confirmed').map(
       (a) => a.id
     ),
-    decoIds: DECORATIONS_DB.filter((d) => Math.max(d.minMr, getMinimumCraftingMr(d.id)) <= mr).map((d) => d.id),
+    decoIds: DECORATIONS_DB.filter((d) => getEquipmentProgression(d, mr, ar) === 'confirmed').map((d) => d.id),
   };
 }
 

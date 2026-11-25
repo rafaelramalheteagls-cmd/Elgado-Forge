@@ -87,6 +87,7 @@ export interface WeaponItem {
   unlockNote: string;
   sourceId?: number;
   sourceSharpnessGauge?: number[];
+  sourceHandicraftExtension?: number[];
   sourceSlots?: number[];
   sourceRampageSlots?: number[];
   sourceProgression?: { village?: unknown; hall?: unknown; masterRank?: unknown; craftingProgressFlags?: number[] };
@@ -276,6 +277,7 @@ export interface CalculatedBuildStats {
   critMultiplier: number;
   sharpness: SharpnessTier;
   sharpnessRawMod: number;
+  sharpnessGauge?: number[];
   sharpnessElemMod: number;
   defense: number;
   resistances: {

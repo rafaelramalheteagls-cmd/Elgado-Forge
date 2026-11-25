@@ -3,6 +3,7 @@ import { SharpnessTier } from '../types/sunbreak';
 
 interface SharpnessBarProps {
   sharpness: SharpnessTier;
+  gauge?: number[];
   compact?: boolean;
 }
 
@@ -26,8 +27,9 @@ const ORDER: SharpnessTier[] = [
   'Purple',
 ];
 
-export const SharpnessBar: React.FC<SharpnessBarProps> = ({ sharpness, compact }) => {
+export const SharpnessBar: React.FC<SharpnessBarProps> = ({ sharpness, gauge, compact }) => {
   const maxIdx = ORDER.indexOf(sharpness);
+  const gaugeMax = gauge ? Math.max(400, gauge.reduce((sum, points) => sum + points, 0)) : 400;
 
   return (
     <div className="flex items-center gap-2.5">
@@ -43,7 +45,7 @@ export const SharpnessBar: React.FC<SharpnessBarProps> = ({ sharpness, compact }
             <div
               key={seg.tier}
               style={{
-                width: seg.width,
+                width: gauge ? `${(gauge[idx] ?? 0) / gaugeMax * 100}%` : seg.width,
                 backgroundColor: active ? seg.color : 'transparent',
                 opacity: active ? 1 : 0.15,
               }}

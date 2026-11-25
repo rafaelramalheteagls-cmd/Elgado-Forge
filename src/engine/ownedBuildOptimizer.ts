@@ -29,7 +29,7 @@ import {
 } from '../types/sunbreak';
 import {
   aggregateBuildSkills,
-  canCraftMissingEquipmentAtMr,
+  getMissingEquipmentProgression,
   calculateBuildCraftingSummary,
   rampageDecorationFits,
   EMPTY_RECOMMENDATION_TALISMAN,
@@ -37,6 +37,8 @@ import {
   resolveRecommendationInventory,
   resolveDecorationSlots,
   resolveMechanicsWeapon,
+  resolveWeaponSharpness,
+  preferOwnedArmorVariants,
   calculateBuildStats,
   DEFAULT_SIM_CONFIG,
   simulateTrainingDps,
@@ -88,7 +90,7 @@ type GlaiveStyle = 'extracts' | 'elemental';
 type SkillPriority = { name: string; level: number; target: number };
 
 export interface OwnedTemplateMatch {
-  template: MetaBuildTemplate;
+  template: MetaBuildTemplate & { omittedDecorations: string[] };
   templateStats: CalculatedBuildStats;
   adaptedWeapon: WeaponItem;
   weaponOwnedInBox: boolean;
@@ -98,6 +100,7 @@ export interface OwnedTemplateMatch {
   bestOwnedTalisman: TalismanItem | null;
   readiness: OwnedReadiness;
   rankEligible: boolean;
+  progressionUnverified: boolean;
   ownedGearCount: number;
   totalGearCount: number;
   gearOwnershipPercent: number;
@@ -255,12 +258,9 @@ export function getSkillWeightsForWeapon(weapon: WeaponItem, style?: GlaiveStyle
   // Sharpness & Melee-only skills (0 on all Gunners!)
   if (!isShot) {
     weights.heaven_sent = 12;
-    weights.handicraft =
-      weapon.handicraftBonusSharpness && weapon.sharpness !== 'Purple'
-        ? 13
-        : weapon.sharpness === 'Purple'
-        ? 2
-        : 6;
+    const extendsGauge = weapon.sourceHandicraftExtension?.some(points => points > 0);
+    weights.handicraft = resolveWeaponSharpness(weapon, 5).tier !== weapon.sharpness ? 13
+      : extendsGauge || !weapon.sourceHandicraftExtension ? 6 : 0;
     weights.masters_touch = 11;
     weights.protective_polish = 9;
     weights.razor_sharp = 8;
@@ -918,11 +918,12 @@ export function evaluateOwnedBuildMatches(
       const templateTitle = weapon.weaponClass === 'Gunlance'
         ? template.title.replace(/\b(Normal|Long|Wide) Lv\d+\s*/i, '')
         : template.title;
-      const fullTemplateLoadout = optimizeTemplateTalisman({
+      const templateForBox = preferOwnedArmorVariants({
         ...template.loadout,
         id: template.id,
         updatedAt: new Date().toISOString(),
-      }, weapon, inventory, preference);
+      }, inventory.ownedArmorIds);
+      const fullTemplateLoadout = optimizeTemplateTalisman(templateForBox, weapon, inventory, preference);
       const templateStats = calculateBuildStats(fullTemplateLoadout);
 
       // Pull synced weapon: use template weapon if owned, otherwise substitute best matching owned weapon
@@ -949,11 +950,11 @@ export function evaluateOwnedBuildMatches(
 
       const gearChecks = [
         { owned: weaponOwnedInBox, name: adaptedWeapon.name },
-        { owned: ownedArmorSet.has(helm.id), name: helm.name },
-        { owned: ownedArmorSet.has(chest.id), name: chest.name },
-        { owned: ownedArmorSet.has(arms.id), name: arms.name },
-        { owned: ownedArmorSet.has(waist.id), name: waist.name },
-        { owned: ownedArmorSet.has(legs.id), name: legs.name },
+        { owned: ownedArmorSet.has(templateForBox.helmId), name: helm.name },
+        { owned: ownedArmorSet.has(templateForBox.chestId), name: chest.name },
+        { owned: ownedArmorSet.has(templateForBox.armsId), name: arms.name },
+        { owned: ownedArmorSet.has(templateForBox.waistId), name: waist.name },
+        { owned: ownedArmorSet.has(templateForBox.legsId), name: legs.name },
       ];
 
       const ownedGearCount = gearChecks.filter((g) => g.owned).length;
@@ -997,7 +998,7 @@ export function evaluateOwnedBuildMatches(
         : chooseBestRampageDeco(adaptedWeapon, ownedDecoSet);
 
       const { loadout: adaptedLoadout, stats: adaptedStats } = optimizeLoadoutTalisman({
-        ...template.loadout,
+        ...templateForBox,
         id: `owned_${template.id}_${adaptedWeapon.id}`,
         name: `${templateTitle} (Your Box)`,
         weaponId: adaptedWeapon.id,
@@ -1020,6 +1021,9 @@ export function evaluateOwnedBuildMatches(
       const bestOwnedTalisman = adaptedLoadout.talisman === EMPTY_RECOMMENDATION_TALISMAN ? null : adaptedLoadout.talisman;
 
       const readiness: OwnedReadiness = ownedGearCount === 6 ? 'ready' : 'partial';
+      const missingPieces = calculateBuildCraftingSummary(adaptedLoadout, inventory).pieceBreakdowns;
+      const progression = getMissingEquipmentProgression(missingPieces, inventory, profile.mr, profile.ar);
+      const rankEligible = profile.mr >= template.minMr && profile.ar >= template.minAr && progression !== 'locked';
 
       return [{
         template: {
@@ -1035,8 +1039,8 @@ export function evaluateOwnedBuildMatches(
         adaptedStats,
         bestOwnedTalisman,
         readiness,
-        rankEligible: profile.mr >= template.minMr && profile.ar >= template.minAr
-          && canCraftMissingEquipmentAtMr(adaptedLoadout, inventory, profile.mr),
+        rankEligible,
+        progressionUnverified: rankEligible && progression === 'unverified',
         ownedGearCount,
         totalGearCount,
         gearOwnershipPercent,

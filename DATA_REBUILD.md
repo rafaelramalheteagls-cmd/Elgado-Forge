@@ -40,7 +40,9 @@ Weapon names are matched by source weapon ID within each class. Tree indices rep
 
 The compact runtime weapon records retain source-specific details and crafting recipe paths (`sourceDetails`, `sourceCrafting`), tree progression flags, source sharpness gauge, original slot-count arrays, and Rampage slot counts. Armor records retain source series, rank group, full resistance values, original slot counts and all skill references. Decorations retain every source skill reference in `sourceSkills`; Rampage decorations retain their separate Rampage skill names.
 
-The simulator still simplifies sharpness depletion, skill uptime and cycle timing. The rank band is shown as LR/HR/MR. Source progress and crafting flags are retained, while the current `minMr` gate remains coarse for imported MR equipment.
+Handicraft extends the source gauge by up to 10 points per level, following the weapon's extension segments. The simulator still simplifies sharpness depletion, skill uptime and cycle timing.
+
+Equipment filters use the catalog's LR, HR and MR bands. Progression checks consider tree and recipe requirements. Rank alone leaves quest clears, key monsters, key items and NPC conditions unverified when the app has no evidence for them.
 
 ### Build and combat references
 

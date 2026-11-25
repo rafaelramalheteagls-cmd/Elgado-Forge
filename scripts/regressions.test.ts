@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CRAFTING_CATEGORY_MATERIALS, getWeaponCraftingOptions } from '../src/data/mhriceAdapter';
+import { CRAFTING_CATEGORY_MATERIALS, getEquipmentProgression, getWeaponCraftingOptions } from '../src/data/mhriceAdapter';
 import { EMPTY_Q_ARMOR } from '../src/data/quriousDefaults';
-import { ARMOR_DB, DECORATIONS_DB, STARTER_LOADOUT, WEAPONS_DB } from '../src/data/sunbreakDb';
+import { ARMOR_DB, DECORATIONS_DB, META_BUILD_TEMPLATES, STARTER_LOADOUT, WEAPONS_DB, getWeaponById } from '../src/data/sunbreakDb';
 import { createCraftingPlanner, recordCraftedItem, summarizeCraftingForecast } from '../src/engine/craftingPlanner';
-import { calculateBuildStats, DEFAULT_SIM_CONFIG, simulateTrainingDps } from '../src/engine/damageCalculator';
+import { calculateBuildStats, decorationFits, DEFAULT_SIM_CONFIG, evaluateMetaRecommendations, getUnlockedIdsForRank, preferOwnedArmorVariants, RECOMMENDATION_TEMPLATES, resolveDecorationSlots, resolveWeaponSharpness, simulateTrainingDps } from '../src/engine/damageCalculator';
+import { optimizeTemplateTalisman } from '../src/engine/ownedBuildOptimizer';
 import { createDefaultInventory, DEFAULT_HUNTER_PROFILE, mergeImportedDecorations, mergeImportedEquipment, mergeSteamProfile, parseBuildsBackup, parseCharmOrInventoryPayload, partitionBuildsBackup } from '../src/utils/storageAndShare';
 
 test('a damaged complete decoration export preserves the previous inventory', () => {
@@ -249,4 +250,56 @@ test('recording a weapon upgrade spends its materials and consumes the starting 
   assert.deepEqual(after.materials, {});
   assert.equal(recordCraftedItem(after, 'weapon', step), after);
   assert.equal(inventory.materials['Afflicted Claw'], 5);
+});
+
+test('MHRice Handicraft expands the gauge before changing damage multipliers', () => {
+  const weapon = WEAPONS_DB.find(item => item.name === 'Scarlet Lamplance+');
+  assert.ok(weapon);
+  const [base, first, second, max] = [0, 1, 2, 5].map(level => resolveWeaponSharpness(weapon, level));
+  assert.equal(base.tier, 'White');
+  assert.deepEqual(first.gauge?.slice(-2), [60, 0]);
+  assert.equal(first.tier, 'White');
+  assert.deepEqual(second.gauge?.slice(-2), [60, 10]);
+  assert.equal(second.tier, 'Purple');
+  assert.deepEqual(max.gauge?.slice(-2), [60, 40]);
+});
+
+test('all curated templates have legal slots and keep equivalent owned Rakna variants', () => {
+  assert.equal(RECOMMENDATION_TEMPLATES.length, META_BUILD_TEMPLATES.length);
+  const hbg = RECOMMENDATION_TEMPLATES.find(template => template.id === 'meta_hbg_story_mr');
+  assert.ok(hbg);
+  assert.equal(preferOwnedArmorVariants(hbg.loadout, ['armor:head:331']).helmId, 'armor:head:331');
+  assert.ok(RECOMMENDATION_TEMPLATES.some(template => template.id === 'meta_bow_story_mr'));
+  for (const template of RECOMMENDATION_TEMPLATES) {
+    const slots = resolveDecorationSlots(template.loadout);
+    for (const key of Object.keys(slots) as Array<keyof typeof slots>) {
+      assert.ok(template.loadout.decorations[key].every((id, index) => !id || decorationFits(id, slots[key][index])),
+        `Invalid ${key} decoration in ${template.id}`);
+    }
+    assert.notEqual(template.loadout.rampageDecoId, 'ramp_anti_elder');
+  }
+  const inventory = createDefaultInventory();
+  const template = RECOMMENDATION_TEMPLATES.find(item => item.id === 'meta_gs_early_mr');
+  assert.ok(template);
+  const weapon = getWeaponById(template.loadout.weaponId);
+  assert.ok(weapon);
+  const compare = calculateBuildStats(optimizeTemplateTalisman(template.loadout, weapon, inventory));
+  const meta = evaluateMetaRecommendations(DEFAULT_HUNTER_PROFILE, inventory, 'Great Sword', 'All', optimizeTemplateTalisman)
+    .find(item => item.template.id === template.id);
+  assert.equal(compare.effectiveRaw, meta?.stats.effectiveRaw);
+  assert.ok(!calculateBuildStats(STARTER_LOADOUT).overcappedSkills.includes('weakness_exploit'));
+});
+
+test('rank-only unlocks exclude gated or unverified equipment', () => {
+  const armor = ARMOR_DB.find(item => item.name === 'Valstrax Helm - Epoch');
+  const weapon = WEAPONS_DB.find(item => item.name === 'Torci Da Lavater');
+  assert.ok(armor && weapon);
+  assert.equal(getEquipmentProgression(armor, 10, 0), 'locked');
+  assert.equal(getEquipmentProgression(armor, 160, 0), 'unverified');
+  assert.equal(getEquipmentProgression(weapon, 10, 0), 'unverified');
+  assert.equal(getEquipmentProgression(weapon, 10, 0, { 'Afflicted Claw': 5 }), 'confirmed');
+  const unlocks = getUnlockedIdsForRank(10, 0);
+  assert.ok(unlocks.weaponIds.length > 0);
+  assert.ok(!unlocks.weaponIds.includes(weapon.id));
+  assert.ok(!unlocks.armorIds.includes(armor.id));
 });

@@ -11,8 +11,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "tsx --test scripts/regressions.test.ts",
-    "data:import": "python scripts/import-mhrice.py mhrice.json src/data/generated/mhriceCatalog.json && python scripts/build-mhrice-app-catalog.py",
-    "data:validate": "python scripts/validate-mhrice.py src/data/generated/mhriceCatalog.json && python scripts/validate-mhrice-app.py src/data/generated/mhriceCatalog.json src/data/generated/mhriceAppCatalog.json"
+    "data:import": "node scripts/run-data.mjs import",
+    "data:validate": "node scripts/run-data.mjs validate"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -429,7 +429,7 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                   <span className="font-mono-tabular">
                     Affinity {weapon.affinity >= 0 ? `+${weapon.affinity}%` : `${weapon.affinity}%`}
                   </span>
-                  <SharpnessBar sharpness={stats.sharpness} compact />
+                  <SharpnessBar sharpness={stats.sharpness} gauge={stats.sharpnessGauge} compact />
                 </div>
               </div>
 

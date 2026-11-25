@@ -904,9 +904,13 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                           </h3>
                           {!match.rankEligible && (
                             <p className="mt-1 text-xs text-amber-400">
-                              Template requires MR {template.minMr}
-                              {template.minAr > 0 ? ` / AR ${template.minAr}` : ''}
+                              {profile.mr < template.minMr || profile.ar < template.minAr
+                                ? `Template requires MR ${template.minMr}${template.minAr > 0 ? ` / AR ${template.minAr}` : ''}`
+                                : 'Some missing equipment requires more progression.'}
                             </p>
+                          )}
+                          {match.progressionUnverified && (
+                            <p className="mt-1 text-xs text-amber-400">Verify smithy unlocks for missing equipment.</p>
                           )}
                         </div>
 
@@ -921,6 +925,12 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                       <p className="mt-2 text-xs leading-relaxed text-[#98A2B3]">
                         {template.summary}
                       </p>
+                      {template.omittedDecorations.length > 0 && (
+                        <details className="mt-2 text-[11px] text-[#98A2B3]">
+                          <summary className="cursor-pointer">Legacy decorations left out · {template.omittedDecorations.length}</summary>
+                          <p className="mt-1">{[...new Set(template.omittedDecorations)].join(' · ')}</p>
+                        </details>
+                      )}
 
                       <p className="mt-2 text-[11px] text-[#98A2B3]">
                         <span className="text-[#667085]">Weapon: </span>
