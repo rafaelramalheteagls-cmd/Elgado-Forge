@@ -6,9 +6,12 @@ import {
   WEAPON_COMBOS_DB,
 } from '../data/sunbreakDb';
 import {
+  aggregateBuildSkills,
   DEFAULT_SIM_CONFIG,
+  resolveMechanicsWeapon,
   simulateTrainingDps,
 } from '../engine/damageCalculator';
+import { getPrimaryBowgunAmmo, supportsOffensiveGuard } from '../data/weaponMechanics';
 import {
   BuildLoadout,
   MonsterState,
@@ -25,13 +28,14 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
   loadout,
 }) => {
   const weapon = getWeaponById(loadout.weaponId);
+  const hasDragonConversion = useMemo(() => (aggregateBuildSkills(loadout).skills.dragon_conversion ?? 0) > 0, [loadout]);
 
   const classCombos = useMemo(() => {
     const exact = WEAPON_COMBOS_DB.filter(
-      (c) => c.weaponClass === loadout.weaponClass
+      (c) => c.weaponClass === (weapon?.weaponClass ?? loadout.weaponClass)
     );
     return exact.length > 0 ? exact : WEAPON_COMBOS_DB;
-  }, [loadout.weaponClass]);
+  }, [loadout.weaponClass, weapon?.weaponClass]);
 
   const [config, setConfig] = useState<SimulationConfig>(() => ({
     ...DEFAULT_SIM_CONFIG,
@@ -65,7 +69,10 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
     monster.hitzones.find((h) => h.partName === config.partName) ??
     monster.hitzones[0];
   const activeCombo =
-    WEAPON_COMBOS_DB.find((c) => c.id === config.comboId) ?? classCombos[0];
+    classCombos.find((c) => c.id === config.comboId) ?? classCombos[0];
+  const hasFixedDamage = activeCombo.hits.some((hit) => hit.gunlanceFullBurst || hit.chargeBladeSaedPhials);
+  const isPierce = activeCombo.hits.some(hit => hit.rangedAttack === 'bowgun-magazine')
+    && weapon && getPrimaryBowgunAmmo(resolveMechanicsWeapon(weapon), loadout.bowgunAmmo)?.pierce;
 
   const result = useMemo(
     () => simulateTrainingDps(loadout, config),
@@ -121,11 +128,11 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
             <div>
               <span className="block text-[11px] text-[#98A2B3]">Simulated DPS</span>
               <span className="text-2xl font-bold text-[#D4A853]">
-                {result.dps.toFixed(1)}
+                {result.dps?.toFixed(1) ?? '—'}
               </span>
             </div>
             <div>
-              <span className="block text-[11px] text-[#98A2B3]">Combo Burst</span>
+              <span className="block text-[11px] text-[#98A2B3]">{result.isBowgunMagazine ? 'Damage per Magazine' : 'Combo Burst'}</span>
               <span className="text-2xl font-semibold text-[#ECEFF4]">
                 {result.comboDamage}
               </span>
@@ -135,8 +142,8 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
                 Est. Solo Clear ({monster.name})
               </span>
               <span className="text-2xl font-semibold text-[#ECEFF4]">
-                {Math.floor(result.estimatedClearSeconds / 60)}m{' '}
-                {String(result.estimatedClearSeconds % 60).padStart(2, '0')}s
+                {result.estimatedClearSeconds === undefined ? '—'
+                  : `${Math.floor(result.estimatedClearSeconds / 60)}m ${String(result.estimatedClearSeconds % 60).padStart(2, '0')}s`}
               </span>
             </div>
           </div>
@@ -199,6 +206,17 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
                 ))}
               </select>
 
+              {isPierce && (
+                <label className="mt-2 block text-xs text-[#98A2B3]">
+                  Pierce ticks per projectile
+                  <select className="ml-2 rounded border border-white/10 bg-[#0B0D10] px-2 py-1"
+                    value={config.pierceTicksPerProjectile ?? 1}
+                    onChange={event => setConfig(previous => ({ ...previous, pierceTicksPerProjectile: Number(event.target.value) }))}>
+                    {Array.from({ length: 10 }, (_, index) => <option key={index} value={index + 1}>{index + 1}</option>)}
+                  </select>
+                  <span className="mt-1 block text-[11px]">Scenario estimate. Each tick uses the selected hitzone.</span>
+                </label>
+              )}
               <div className="mt-2.5 grid grid-cols-4 gap-2 rounded-lg border border-white/[0.07] bg-[#0B0D10] p-2.5 text-center font-mono-tabular text-xs">
                 <div>
                   <span className="block text-[10px] text-[#667085]">Sever</span>
@@ -274,7 +292,7 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
               >
                 {classCombos.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name} ({c.durationSec}s)
+                    {c.name}{c.durationSec !== undefined && ` (${c.durationSec}s)`}
                   </option>
                 ))}
               </select>
@@ -289,6 +307,26 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
             <h2 className="font-display text-base font-semibold text-[#ECEFF4]">
               Skill Uptime & Buff Assumptions
             </h2>
+
+            {hasDragonConversion && (
+              <label className="flex items-center gap-2 text-xs text-[#98A2B3]">
+                <input type="checkbox" checked={config.dragonConversionCharged ?? false}
+                  onChange={event => setConfig(current => ({ ...current, dragonConversionCharged: event.target.checked }))}
+                  className="accent-[#D4A853]" />
+                Dragon Conversion charged on Blue Scroll
+              </label>
+            )}
+
+            {supportsOffensiveGuard(loadout.weaponClass) && (
+              <label className="block text-xs text-[#98A2B3]">
+                <span className="flex justify-between">
+                  Offensive Guard Uptime <span className="text-[#ECEFF4]">{config.offensiveGuardUptime ?? 70}%</span>
+                </span>
+                <input type="range" min={0} max={100} step={5} value={config.offensiveGuardUptime ?? 70}
+                  onChange={event => setConfig(current => ({ ...current, offensiveGuardUptime: Number(event.target.value) }))}
+                  className="mt-1 w-full accent-[#D4A853]" />
+              </label>
+            )}
 
             <div>
               <div className="flex justify-between text-xs">
@@ -444,7 +482,7 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
               </h2>
               <div className="flex items-center gap-4 font-mono-tabular text-xs">
                 <span className="text-[#D4A853]">
-                  Raw {result.rawSharePercent}%
+                  {hasFixedDamage ? 'Raw + fixed' : 'Raw'} {result.rawSharePercent}%
                 </span>
                 <span className="text-sky-400">
                   Elemental {result.elementSharePercent}%
@@ -486,7 +524,7 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
                 </h2>
               </div>
               <span className="font-mono-tabular text-xs text-[#98A2B3]">
-                Cycle {activeCombo.durationSec}s
+                {result.cycleSeconds === undefined ? 'Magazine timing unavailable' : `Estimated cycle ${result.cycleSeconds.toFixed(2)}s`}
               </span>
             </div>
 
@@ -494,7 +532,9 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
               <thead className="border-b border-white/[0.08] bg-[#0F1318] text-[#98A2B3]">
                 <tr>
                   <th className="px-5 py-2.5 font-medium">Attack Move</th>
-                  <th className="px-4 py-2.5 text-right font-medium">Raw</th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    {hasFixedDamage ? 'Raw / Fixed' : 'Raw'}
+                  </th>
                   <th className="px-4 py-2.5 text-right font-medium">Element</th>
                   <th className="px-4 py-2.5 text-right font-medium">Crit Hit</th>
                   <th className="px-5 py-2.5 text-right font-medium">Average</th>
@@ -505,18 +545,25 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
                   <tr key={idx} className="hover:bg-white/[0.02]">
                     <td className="px-5 py-3 font-medium text-[#ECEFF4]">
                       {hit.moveName}
+                      {hit.shellCount !== undefined && (
+                        <span className="ml-1 text-[#98A2B3]">
+                          {hit.shellCount === 0 ? '· Cannot fire at red sharpness' : `· ${hit.shellCount} shells`}
+                        </span>
+                      )}
+                      {hit.shellingUnavailable && <span className="ml-1 text-[#98A2B3]">· Shelling data unavailable</span>}
+                      {hit.attackUnavailable && <span className="ml-1 text-[#98A2B3]">· Attack data unavailable</span>}
                     </td>
                     <td className="px-4 py-3 text-right font-mono-tabular text-[#98A2B3]">
-                      {hit.rawDamage}
+                      {hit.attackUnavailable ? '—' : hit.rawDamage}
                     </td>
                     <td className="px-4 py-3 text-right font-mono-tabular text-sky-400">
-                      {hit.elementDamage}
+                      {hit.attackUnavailable ? '—' : hit.elementDamage}
                     </td>
                     <td className="px-4 py-3 text-right font-mono-tabular text-[#ECEFF4]">
-                      {hit.critDamage}
+                      {hit.shellCount !== undefined || hit.shellingUnavailable || hit.nonCritical || hit.attackUnavailable ? '—' : hit.critDamage}
                     </td>
                     <td className="px-5 py-3 text-right font-mono-tabular font-semibold text-[#D4A853]">
-                      {hit.totalAverageDamage}
+                      {hit.attackUnavailable ? '—' : hit.totalAverageDamage}
                     </td>
                   </tr>
                 ))}
@@ -536,7 +583,7 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
           </section>
 
           {/* 60-Second Cumulative Damage Curve */}
-          <section className="rounded-xl border border-white/[0.09] bg-[#12161C] p-5">
+          {result.timeline.length > 0 && <section className="rounded-xl border border-white/[0.09] bg-[#12161C] p-5">
             <div className="flex items-center justify-between mb-3">
               <div>
                 <h2 className="font-display text-base font-semibold text-[#ECEFF4]">
@@ -619,7 +666,7 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
                 })}
               </svg>
             </div>
-          </section>
+          </section>}
         </div>
       </div>
     </div>

@@ -1,0 +1,29 @@
+{
+  "output": "src\\data\\generated\\mhriceCatalog.json",
+  "bytes": 9887149,
+  "counts": {
+    "weapons": 4178,
+    "weaponClasses": 14,
+    "armor": 1639,
+    "skills": 147,
+    "decorations": 245,
+    "rampageDecorations": 34
+  },
+  "validation": {
+    "selectableWeaponsMissingEnglishName": 0,
+    "nonSelectableWeaponsMissingEnglishName": 225,
+    "armorMissingEnglishName": 45,
+    "skillsMissingEnglishName": 0,
+    "decorationsMissingEnglishName": 1,
+    "armorSkillRefsMissing": 0,
+    "decorationSkillRefsMissing": 0,
+    "weaponsWithoutTreeNode": 253,
+    "selectableWeapons": 3925,
+    "nonSelectableWeaponRecords": 253
+  },
+  "sourceSha": [
+    "2aa568168bf7806c46a0e956ee0912a011a39eb70fc69ff07949022a43cfc9fd",
+    "798e61b8ee88d9104d317034d3155283d5a02423faa5691a4aad0debb817e05d"
+  ],
+  "sha256": "3818fdef73f9d4d83c4f75a3c6286ccbdcf4555425c5c3547f4489cb887d466f"
+}

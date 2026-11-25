@@ -353,7 +353,7 @@ export const WEAPONS_DB: WeaponItem[] = [
   wp('hbg_kamura_5', 'Kamura H. Bowgun V', 'Heavy Bowgun', 4, 'HR', 0, 0, 160, 'None', 0, 0, 0, 'White', [2, 0, 0], 0, 'Shot', 'High Rank Kamura Heavy Bowgun'),
   wp('hbg_defender_1', 'Defender Heavy Bowgun I', 'Heavy Bowgun', 1, 'HR', 0, 0, 110, 'None', 0, 0, 30, 'White', [0, 0, 0], 0, 'Shot', 'Defender progression Heavy Bowgun'),
   wp('hbg_arzuros_1', 'Arzuros Gun I', 'Heavy Bowgun', 1, 'HR', 0, 0, 100, 'None', 0, 0, 15, 'White', [0, 0, 0], 0, 'Shot', 'Arzuros Heavy Bowgun'),
-  wp('hbg_bone_1', 'Bone Gun I', 'Bow', 1, 'HR', 0, 0, 90, 'None', 0, 0, 0, 'White', [0, 0, 0], 0, 'Shot', 'Bone Tree Bow'),
+  wp('hbg_bone_1', 'Bone Gun I', 'Heavy Bowgun', 1, 'HR', 0, 0, 90, 'None', 0, 0, 0, 'White', [0, 0, 0], 0, 'Shot', 'Bone Tree Heavy Bowgun'),
   wp('hbg_rajang_cyclone', 'Rajang Cyclone', 'Heavy Bowgun', 10, 'MR 10+', 10, 0, 360, 'None', 0, -20, 0, 'White', [3, 0, 0], 3, 'Shot', 'MR Rajang (Sticky 3 / Spread 3)'),
   wp('bow_kamura_1', 'Kamura Iron Bow I', 'Bow', 1, 'HR', 0, 0, 60, 'None', 0, 0, 0, 'White', [0, 0, 0], 0, 'Shot', 'Base Kamura Bow'),
   wp('bow_kamura_warrior', 'Kamura Warrior Bow', 'Bow', 8, 'Early MR', 1, 0, 270, 'None', 0, 0, 0, 'White', [4, 1, 0], 2, 'Shot', 'Early Master Rank Kamura Bow (Rapid)'),

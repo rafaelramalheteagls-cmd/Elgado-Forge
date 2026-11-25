@@ -1,3 +1,4 @@
+import catalog from './generated/mhriceAppCatalog.json';
 import { ElementType, MonsterDefinition, MonsterHitzone } from '../types/sunbreak';
 
 function hz(
@@ -59,12 +60,7 @@ export const MONSTERS_DB: MonsterDefinition[] = [
   ]),
 
   // Endgame & Title Update / Risen Elders
-  mon('mon_primordial_malzeno', 'Primordial Malzeno', 'Elder Dragon', 'MR Endgame', 57200, 1.15, 'Dragon', 'Fire', [
-    hz('Head', 55, 55, 45, 15, 5, 5, 10, 25, true),
-    hz('Forelegs', 45, 45, 35, 15, 5, 5, 10, 20, true),
-    hz('Wingarms', 45, 40, 35, 20, 5, 5, 10, 25, true),
-    hz('Tail Tip', 50, 40, 45, 15, 0, 0, 10, 20, true),
-  ]),
+  mon('mon_primordial_malzeno', 'Primordial Malzeno', 'Elder Dragon', 'MR Endgame', 57200, 1.15, 'Dragon', 'Fire', catalog.trainingHitzones.mon_primordial_malzeno),
   mon('mon_risen_shagaru', 'Risen Shagaru Magala', 'Elder Dragon', 'MR 180 / AR 131+', 62500, 1.1, 'Dragon', 'Fire', [
     hz('Head', 65, 65, 50, 20, 0, 10, 0, 30, true),
     hz('Wingarms', 55, 50, 45, 20, 0, 10, 0, 25, true),
@@ -179,11 +175,7 @@ export const MONSTERS_DB: MonsterDefinition[] = [
     hz('Wings', 45, 40, 35, 0, 20, 15, 5, 0, true),
     hz('Tail Tip', 55, 45, 40, 0, 25, 20, 10, 0, true),
   ]),
-  mon('mon_rathalos', 'Rathalos', 'Flying Wyvern', 'MR 4', 30200, 1.1, 'Dragon', 'Thunder', [
-    hz('Head', 65, 65, 55, 0, 15, 20, 10, 30, true),
-    hz('Wings', 45, 40, 45, 0, 10, 15, 5, 20, true),
-    hz('Legs', 45, 45, 45, 0, 10, 15, 5, 15, true),
-  ]),
+  mon('mon_rathalos', 'Rathalos', 'Flying Wyvern', 'MR 4', 30200, 1.1, 'Dragon', 'Thunder', catalog.trainingHitzones.mon_rathalos),
   mon('mon_rathian', 'Gold Rathian', 'Flying Wyvern', 'MR 10+ / MR 70+', 42500, 1.1, 'Thunder', 'Water', [
     hz('Tail Tip', 55, 50, 40, 0, 15, 25, 5, 5, true),
     hz('Wings', 45, 40, 35, 0, 15, 20, 5, 5, true),

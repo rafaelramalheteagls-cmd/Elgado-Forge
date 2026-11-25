@@ -11,6 +11,7 @@ import {
   SKILLS_DB,
   WEAPONS_DB,
 } from './src/data/sunbreakDb.ts';
+import { getUnlockedIdsForRank } from './src/engine/damageCalculator.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -494,24 +495,18 @@ async function startServer() {
     const mr = Math.max(0, Math.min(999, Number(body.mr) || 0));
     const ar = Math.max(0, Math.min(300, Number(body.ar) || 0));
 
-    const unlockedWeapons = WEAPONS_DB.filter((w) => w.minMr <= mr && w.minAr <= ar).map(
-      (w) => w.id
-    );
-    const unlockedArmor = ARMOR_DB.filter((a) => a.minMr <= mr && a.minAr <= ar).map(
-      (a) => a.id
-    );
-    const unlockedDecos = DECORATIONS_DB.filter((d) => d.minMr <= mr).map((d) => d.id);
+    const unlocked = getUnlockedIdsForRank(mr, ar);
 
     res.json({
       ok: true,
       syncedAt: new Date().toISOString(),
-      unlockedWeaponIds: unlockedWeapons,
-      unlockedArmorIds: unlockedArmor,
-      unlockedDecoIds: unlockedDecos,
+      unlockedWeaponIds: unlocked.weaponIds,
+      unlockedArmorIds: unlocked.armorIds,
+      unlockedDecoIds: unlocked.decoIds,
     });
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.NODE_ENV !== 'production' && !process.argv.includes('--production')) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

@@ -1,12 +1,11 @@
 import {
-  ArmorSlot,
   BuildLoadout,
   MetaBuildTemplate,
-  QuriousArmorAugment,
   RankTier,
   TalismanItem,
   WeaponClass,
 } from '../types/sunbreak';
+import { EMPTY_Q_ARMOR, EMPTY_Q_WEAPON } from './quriousDefaults';
 
 export const DEFAULT_TALISMAN: TalismanItem = {
   id: 'tali_default_wex2',
@@ -95,22 +94,6 @@ export const PRESET_TALISMANS: TalismanItem[] = [
     source: 'Preset',
   },
 ];
-
-const EMPTY_Q_ARMOR: Record<ArmorSlot, QuriousArmorAugment> = {
-  Helm: { defenseDelta: 0, skillAddedId: '', skillAddedPoints: 0, slotUpgrade: 0 },
-  Chest: { defenseDelta: 0, skillAddedId: '', skillAddedPoints: 0, slotUpgrade: 0 },
-  Arms: { defenseDelta: 0, skillAddedId: '', skillAddedPoints: 0, slotUpgrade: 0 },
-  Waist: { defenseDelta: 0, skillAddedId: '', skillAddedPoints: 0, slotUpgrade: 0 },
-  Legs: { defenseDelta: 0, skillAddedId: '', skillAddedPoints: 0, slotUpgrade: 0 },
-};
-
-const EMPTY_Q_WEAPON = {
-  attackLevel: 0,
-  elementLevel: 0,
-  affinityLevel: 0,
-  sharpnessBoost: false,
-  extraSlotLevel: 0,
-};
 
 export const STARTER_LOADOUT: BuildLoadout = {
   id: 'build_starter_ls',

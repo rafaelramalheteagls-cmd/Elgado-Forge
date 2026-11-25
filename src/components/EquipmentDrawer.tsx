@@ -5,7 +5,9 @@ import {
   DECORATIONS_DB,
   SKILLS_DB,
   WEAPONS_DB,
+  getWeaponById,
 } from '../data/sunbreakDb';
+import { rampageDecorationFits } from '../engine/damageCalculator';
 import {
   ArmorItem,
   ArmorSlot,
@@ -39,7 +41,9 @@ interface EquipmentDrawerProps {
 
 const RANK_TIERS: Array<'All' | RankTier> = [
   'All',
+  'LR',
   'HR',
+  'MR',
   'Early MR',
   'Story MR',
   'MR 10+',
@@ -104,7 +108,7 @@ export const EquipmentDrawer: React.FC<EquipmentDrawerProps> = ({
     if (target?.kind !== 'armor') return [];
     const q = search.trim().toLowerCase();
     return ARMOR_DB.filter((a) => {
-      if (a.slot !== target.slot) return false;
+      if (a.slot !== target.slot || a.isSelectable === false) return false;
       if (q) {
         const skillMatch = Object.entries(a.skills).some(([skId, pts]) => {
           if (pts <= 0) return false;
@@ -113,6 +117,7 @@ export const EquipmentDrawer: React.FC<EquipmentDrawerProps> = ({
         });
         if (
           !a.name.toLowerCase().includes(q) &&
+          !a.variantLabel?.toLowerCase().includes(q) &&
           !a.unlockNote.toLowerCase().includes(q) &&
           !skillMatch
         ) {
@@ -139,18 +144,22 @@ export const EquipmentDrawer: React.FC<EquipmentDrawerProps> = ({
     if (target?.kind !== 'decoration' && target?.kind !== 'rampage') return [];
     const q = search.trim().toLowerCase();
     const isRamp = target.kind === 'rampage';
+    const selectedWeapon = isRamp ? getWeaponById(selectedWeaponId) : undefined;
     return DECORATIONS_DB.filter((d) => {
       if (Boolean(d.isRampage) !== isRamp) return false;
       if (d.slotLevel > target.maxSlotLevel) return false;
+      if (target.kind === 'rampage' && !rampageDecorationFits(
+        d.id, selectedWeapon, target.maxSlotLevel - (selectedWeapon?.rampageSlot ?? 0),
+      )) return false;
       if (q) {
-        const skName = SKILLS_DB.find((s) => s.id === d.skillId)?.name.toLowerCase() ?? '';
+        const skName = (d.skillName ?? SKILLS_DB.find((s) => s.id === d.skillId)?.name ?? '').toLowerCase();
         if (!d.name.toLowerCase().includes(q) && !skName.includes(q)) return false;
       }
       if (!isRamp && skillFilter && d.skillId !== skillFilter) return false;
       if (ownedOnly && !ownedDecos.has(d.id)) return false;
       return true;
     }).sort((a, b) => b.slotLevel - a.slotLevel || b.points - a.points);
-  }, [target, search, skillFilter, ownedOnly, ownedDecos]);
+  }, [target, search, skillFilter, ownedOnly, ownedDecos, selectedWeaponId]);
 
   if (!target) return null;
 
@@ -410,7 +419,9 @@ export const EquipmentDrawer: React.FC<EquipmentDrawerProps> = ({
                     }`}
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <span className="font-medium text-sm text-[#ECEFF4]">{a.name}</span>
+                      <span className="font-medium text-sm text-[#ECEFF4]">
+                        {a.name}{a.variantLabel && <span className="ml-2 text-xs text-[#98A2B3]">{a.variantLabel}</span>}
+                      </span>
                       <span className="font-mono-tabular text-xs text-[#98A2B3]">
                         {a.defense} Def · [{a.slots.join('-')}]
                       </span>
@@ -445,7 +456,7 @@ export const EquipmentDrawer: React.FC<EquipmentDrawerProps> = ({
                 const isSelected = d.id === selectedDecoId;
                 const isOwned = ownedDecos.has(d.id);
                 const skillName =
-                  SKILLS_DB.find((s) => s.id === d.skillId)?.name ?? d.skillId;
+                  d.skillName ?? SKILLS_DB.find((s) => s.id === d.skillId)?.name ?? d.skillId;
                 return (
                   <button
                     key={d.id}
@@ -470,7 +481,7 @@ export const EquipmentDrawer: React.FC<EquipmentDrawerProps> = ({
                       </div>
                       <div className="mt-0.5 text-xs text-[#98A2B3]">
                         {d.isRampage
-                          ? `Rampage Lv${d.slotLevel} · Species/Elemental Bonus`
+                          ? `Rampage Skill: ${skillName} · Slot Lv${d.slotLevel}`
                           : `${skillName} +${d.points} · Slot Lv${d.slotLevel}`}
                         <span aria-hidden="true"> · </span>
                         <span className={isOwned ? 'text-emerald-400' : 'text-[#667085]'}>

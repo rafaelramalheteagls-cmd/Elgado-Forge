@@ -6,6 +6,9 @@ import { MetaAndSyncView } from './components/MetaAndSyncView';
 import { OwnedRecommendationsView } from './components/OwnedRecommendationsView';
 import { TopBar, WorkspaceTab } from './components/TopBar';
 import { TrainingSimulatorView } from './components/TrainingSimulatorView';
+import { getWeaponById } from './data/sunbreakDb';
+import { EMPTY_ARMOR_AUGMENT, EMPTY_Q_WEAPON } from './data/quriousDefaults';
+import { rampageDecorationFits } from './engine/damageCalculator';
 import {
   ArmorItem,
   BuildLoadout,
@@ -21,6 +24,7 @@ import {
   loadHunterProfile,
   loadInventoryState,
   loadSavedBuilds,
+  partitionBuildsBackup,
   saveActiveBuild,
   saveBuildsList,
   saveFavoriteIds,
@@ -30,6 +34,7 @@ import {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('builder');
+  const [comparisonBuild, setComparisonBuild] = useState<BuildLoadout>();
   const [savedBuilds, setSavedBuilds] = useState<BuildLoadout[]>(() => loadSavedBuilds());
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadFavoriteIds());
   const [activeBuild, setActiveBuild] = useState<BuildLoadout>(() => {
@@ -90,41 +95,6 @@ export default function App() {
     saveInventoryState(inventory);
   }, [inventory]);
 
-  // Real-time inventory auto-sync polling when enabled
-  useEffect(() => {
-    if (!inventory.autoSyncEnabled) return;
-    const runSync = async () => {
-      try {
-        const res = await fetch('/api/inventory/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mr: profile.mr, ar: profile.ar }),
-        });
-        const data = await res.json();
-        if (data?.ok) {
-          setInventory((prev) => ({
-            ...prev,
-            ownedWeaponIds: Array.from(
-              new Set([...prev.ownedWeaponIds, ...(data.unlockedWeaponIds ?? [])])
-            ),
-            ownedArmorIds: Array.from(
-              new Set([...prev.ownedArmorIds, ...(data.unlockedArmorIds ?? [])])
-            ),
-            ownedDecoIds: Array.from(
-              new Set([...prev.ownedDecoIds, ...(data.unlockedDecoIds ?? [])])
-            ),
-            lastInventorySyncAt: data.syncedAt,
-          }));
-        }
-      } catch {
-        // Silent background retry on next interval
-      }
-    };
-
-    const interval = setInterval(runSync, 15000);
-    return () => clearInterval(interval);
-  }, [inventory.autoSyncEnabled, profile.mr, profile.ar]);
-
   const handleSaveBuild = () => {
     const stamped: BuildLoadout = {
       ...activeBuild,
@@ -180,10 +150,13 @@ export default function App() {
   };
 
   const handleSelectWeapon = (weapon: WeaponItem) => {
-    setActiveBuild((prev) => ({
+    setActiveBuild((prev) => prev.weaponId === weapon.id ? prev : ({
       ...prev,
       weaponClass: weapon.weaponClass,
       weaponId: weapon.id,
+      bowgunAmmo: undefined,
+      quriousWeapon: { ...EMPTY_Q_WEAPON },
+      rampageDecoId: rampageDecorationFits(prev.rampageDecoId, weapon) ? prev.rampageDecoId : '',
       decorations: {
         ...prev.decorations,
         weapon: ['', '', ''],
@@ -203,9 +176,11 @@ export default function App() {
         Legs: { idKey: 'legsId' as const, decoKey: 'legs' as const },
       };
       const mapping = slotMap[armor.slot];
+      if (prev[mapping.idKey] === armor.id) return prev;
       return {
         ...prev,
         [mapping.idKey]: armor.id,
+        quriousArmor: { ...prev.quriousArmor, [armor.slot]: { ...EMPTY_ARMOR_AUGMENT } },
         decorations: {
           ...prev.decorations,
           [mapping.decoKey]: ['', '', ''],
@@ -236,11 +211,11 @@ export default function App() {
   };
 
   const handleSelectRampageDeco = (decoId: string) => {
-    setActiveBuild((prev) => ({
-      ...prev,
-      rampageDecoId: decoId,
-      updatedAt: new Date().toISOString(),
-    }));
+    setActiveBuild((prev) => (
+      !decoId || rampageDecorationFits(decoId, getWeaponById(prev.weaponId), prev.quriousWeapon?.extraSlotLevel)
+        ? { ...prev, rampageDecoId: decoId, updatedAt: new Date().toISOString() }
+        : prev
+    ));
     setDrawerTarget(null);
   };
 
@@ -278,6 +253,8 @@ export default function App() {
       <main className="flex-1 pb-12">
         {activeTab === 'builder' && (
           <BuilderWorkspace
+            masterRank={profile.mr}
+            researchLevel={profile.ar}
             loadout={activeBuild}
             savedBuilds={savedBuilds}
             favoriteIds={favoriteIds}
@@ -298,6 +275,9 @@ export default function App() {
         {activeTab === 'compare' && (
           <CompareView
             activeBuild={activeBuild}
+            comparisonBuild={comparisonBuild}
+            inventory={inventory}
+            masterRank={profile.mr}
             savedBuilds={savedBuilds}
             onLoadIntoBuilder={(b) => {
               setActiveBuild(b);
@@ -313,6 +293,11 @@ export default function App() {
 
         {activeTab === 'owned' && (
           <OwnedRecommendationsView
+            activeBuild={activeBuild}
+            onCompareBuild={(build) => {
+              setComparisonBuild(build);
+              setActiveTab('compare');
+            }}
             profile={profile}
             inventory={inventory}
             onUpdateInventory={setInventory}
@@ -336,6 +321,9 @@ export default function App() {
             profile={profile}
             inventory={inventory}
             savedBuilds={savedBuilds}
+            onImportBuilds={(builds) => {
+              setSavedBuilds(current => [...partitionBuildsBackup(builds, current).added, ...current]);
+            }}
             initialSubTab={metaSubTabRequest.tab}
             subTabRequestKey={metaSubTabRequest.key}
             onUpdateProfile={setProfile}

@@ -1,3 +1,6 @@
+import { DECORATION_NAMES_BY_GAME_ID } from '../data/mhriceDecorationIds';
+import catalog from '../data/generated/mhriceAppCatalog.json';
+
 export const REFRAMEWORK_LUA_FILENAME = 'elgado_forge_sync.lua';
 export const REFRAMEWORK_EXPORT_FILENAME = 'elgado_forge_export.json';
 
@@ -7,10 +10,15 @@ export const REFRAMEWORK_LUA_SCRIPT = String.raw`-- Elgado Forge Sync Exporter f
 
 local OUTPUT_FILE = "elgado_forge_export.json"
 local SCHEMA_VERSION = "elgado-forge-reframework-v1"
+local kinsect_names = {
+${catalog.kinsectNames.map(name => `    [${JSON.stringify(name)}] = true,`).join('\n')}
+}
+local decoration_names_by_id = {
+${Array.from(DECORATION_NAMES_BY_GAME_ID, ([id, name]) => `    [${id}] = ${JSON.stringify(name)},`).join('\n')}
+}
 
 local status_msg = "Ready. Load your hunter save in Kamura or Elgado, then click Export."
 local last_summary = nil
-local last_json_cache = ""
 
 local function safe_call(obj, method_name, ...)
     if obj == nil then return nil end
@@ -185,26 +193,92 @@ local function resolve_armor_name(equip_work)
     return ""
 end
 
+local ARMOR_ID_SLOTS = { "head", "chest", "arm", "waist", "leg" }
+
+local function resolve_armor_catalog_id(equip_work)
+    local function decode(value)
+        local raw_id = tonumber(value)
+        if not raw_id then return nil end
+        local offset = raw_id - 0x0C100000
+        local slot = ARMOR_ID_SLOTS[math.floor(offset / 0x100000) + 1]
+        local index = offset % 0x100000
+        if not slot or index > 0xFFFF or index ~= math.floor(index) then return nil end
+        return "armor:" .. slot .. ":" .. tostring(math.floor(index))
+    end
+    -- EquipmentInventoryData exposes the typed armor ID separately from IdVal.
+    local direct = decode(safe_call(equip_work, "get_ArmorId"))
+        or decode(safe_call(equip_work, "get_IdVal") or safe_field(equip_work, "_IdVal"))
+        or decode(safe_call(equip_work, "get_Id") or safe_field(equip_work, "_Id"))
+    if direct then return direct end
+    local armor_data = safe_call(equip_work, "get_PlArmorData")
+    return decode(safe_call(armor_data, "get_PlArmorId") or safe_field(armor_data, "_PlArmorId"))
+end
+
+local function describe_armor_id_members(equip_work)
+    local ok, td = pcall(function() return equip_work:get_type_definition() end)
+    if not ok or not td then return nil end
+    local ok_name, type_name = pcall(function() return td:get_full_name() end)
+    local diagnostic = { type = ok_name and type_name or "unknown", members = {} }
+    local function collect(members, kind)
+        for _, member in ipairs(members or {}) do
+            local ok_member, name = pcall(function() return member:get_name() end)
+            if ok_member and type(name) == "string" then
+                local lower = name:lower()
+                if lower:find("armor") or lower:find("id") or lower:find("sex") then
+                    diagnostic.members[#diagnostic.members + 1] = kind .. " " .. name
+                end
+            end
+        end
+    end
+    local ok_methods, methods = pcall(function() return td:get_methods() end)
+    if ok_methods then collect(methods, "method") end
+    local ok_fields, fields = pcall(function() return td:get_fields() end)
+    if ok_fields then collect(fields, "field") end
+    return diagnostic
+end
+
 local function expand_talisman_slots(sl_list)
     if sl_list == nil then return { 0, 0, 0 } end
     local count = list_count(sl_list)
     if count >= 4 then
-        -- MHRise stores slot counts per level: [lv1_count, lv2_count, lv3_count, lv4_count]
-        local c1 = tonumber(list_get(sl_list, 0) or 0) or 0
-        local c2 = tonumber(list_get(sl_list, 1) or 0) or 0
-        local c3 = tonumber(list_get(sl_list, 2) or 0) or 0
-        local c4 = tonumber(list_get(sl_list, 3) or 0) or 0
+        -- A five-entry array starts with a Lv0 bucket; the four-entry form starts at Lv1.
+        local offset = count >= 5 and 1 or 0
         local expanded = {}
-        for _ = 1, math.floor(c4) do expanded[#expanded + 1] = 4 end
-        for _ = 1, math.floor(c3) do expanded[#expanded + 1] = 3 end
-        for _ = 1, math.floor(c2) do expanded[#expanded + 1] = 2 end
-        for _ = 1, math.floor(c1) do expanded[#expanded + 1] = 1 end
+        for level = 4, 1, -1 do
+            local copies = tonumber(list_get(sl_list, level - 1 + offset)) or 0
+            for _ = 1, math.min(3 - #expanded, math.floor(copies)) do
+                expanded[#expanded + 1] = level
+            end
+        end
         return { expanded[1] or 0, expanded[2] or 0, expanded[3] or 0 }
     end
     local sl1 = tonumber(list_get(sl_list, 0) or 0) or 0
     local sl2 = tonumber(list_get(sl_list, 1) or 0) or 0
     local sl3 = tonumber(list_get(sl_list, 2) or 0) or 0
     return { math.floor(sl1), math.floor(sl2), math.floor(sl3) }
+end
+
+local function is_rampage_deco(id)
+    return id ~= nil and id > 0x00100000 and id <= 0x0010FFFF
+end
+
+local function add_equipped_rampage_deco(eq, ids)
+    local list = safe_field(eq, "_HyakuryuDecoIdList")
+        or safe_call(eq, "getHyakuryuDecoIdList()")
+        or safe_call(eq, "get_HyakuryuDecoIdList")
+    local id = nil
+    for index = 0, list_count(list) - 1 do
+        local candidate = tonumber(list_get(list, index))
+        if is_rampage_deco(candidate) then
+            id = candidate
+            break
+        end
+    end
+    id = id or tonumber(safe_field(eq, "_HyakuryuDecoId") or safe_call(eq, "get_HyakuryuDecoId"))
+    if not is_rampage_deco(id) then
+        id = tonumber(safe_field(eq, "_WeaponHyakuryuDecoId") or safe_call(eq, "get_WeaponHyakuryuDecoId"))
+    end
+    if is_rampage_deco(id) then ids[id] = (ids[id] or 0) + 1 end
 end
 
 local function read_ranks(dm)
@@ -239,10 +313,11 @@ end
 local function scan_item_box(dm)
     local materials = {}
     local item_box = safe_call(dm, "get_PlItemBox") or safe_field(dm, "_PlItemBox")
-    if not item_box then return materials, 0 end
+    if not item_box then return nil, 0 end
 
     local inv_list = safe_call(item_box, "get_InventoryList") or safe_field(item_box, "_InventoryList")
     local total = list_count(inv_list)
+    if total <= 0 then return nil, 0 end
     local count_added = 0
 
     for i = 0, total - 1 do
@@ -267,9 +342,13 @@ end
 local function scan_equipment_box(dm)
     local weapons, armor, talismans = {}, {}, {}
     local seen_weapons, seen_armor = {}, {}
+    local armor_diagnostics = nil
+    local equipped_decorations = {}
+    local equipment_with_deco_lists = 0
+    local scanned_equipment = {}
 
     local equip_box = safe_call(dm, "get_PlEquipBox") or safe_field(dm, "_PlEquipBox")
-    if not equip_box then return weapons, armor, talismans end
+    if not equip_box then return nil, nil, nil, nil, equipped_decorations, equipment_with_deco_lists end
 
     local inv_list = safe_call(equip_box, "get_WeaponArmorInventoryList")
         or safe_call(equip_box, "get_InventoryList")
@@ -277,19 +356,39 @@ local function scan_equipment_box(dm)
         or safe_field(equip_box, "_InventoryList")
 
     local total = list_count(inv_list)
+    if total <= 0 then return nil, nil, nil, nil, equipped_decorations, equipment_with_deco_lists end
     for i = 0, total - 1 do
         local eq = list_get(inv_list, i)
         if eq then
             local id_type = safe_call(eq, "get_IdType") or safe_field(eq, "_IdType")
             local id_type_num = tonumber(id_type)
             local enum_str = safe_call(id_type, "ToString")
-            local type_str = tostring(enum_str or id_type or "")
+            local type_str = tostring(enum_str or id_type or ""):lower()
 
             -- Type checks: Weapon (1), Armor (2), Talisman (3), Kinsect/Insect (4)
-            local is_insect = (id_type_num == 4) or type_str:find("Insect") or type_str:find("Bug") or safe_call(eq, "isInsect") == true
-            local is_talisman = (not is_insect) and ((id_type_num == 3) or type_str:find("Talisman") or safe_call(eq, "isTalisman") == true)
-            local is_weapon = (not is_insect) and (not is_talisman) and ((id_type_num == 1) or type_str:find("Weapon") or safe_call(eq, "isWeapon") == true)
-            local is_armor = (not is_insect) and (not is_talisman) and (not is_weapon) and ((id_type_num == 2) or type_str:find("Armor") or safe_call(eq, "isArmor") == true)
+            local is_insect = (id_type_num == 4) or type_str:find("insect") or type_str:find("bug") or safe_call(eq, "isInsect") == true
+            local is_talisman = (not is_insect) and ((id_type_num == 3) or type_str:find("talisman") or safe_call(eq, "isTalisman") == true)
+            local is_weapon = (not is_insect) and (not is_talisman) and ((id_type_num == 1) or type_str:find("weapon") or safe_call(eq, "isWeapon") == true)
+            local is_armor = (not is_insect) and (not is_talisman) and (not is_weapon) and ((id_type_num == 2) or type_str:find("armor") or safe_call(eq, "isArmor") == true)
+            local weapon_name = is_weapon and resolve_weapon_name(eq) or ""
+            is_weapon = is_weapon and not kinsect_names[weapon_name]
+
+            if (is_weapon or is_armor or is_talisman) and not scanned_equipment[eq] then
+                scanned_equipment[eq] = true
+                local deco_ids = safe_field(eq, "_DecoIdList") or safe_call(eq, "getDecoIdList()")
+                if deco_ids then
+                    equipment_with_deco_lists = equipment_with_deco_lists + 1
+                    for slot = 0, list_count(deco_ids) - 1 do
+                        local id = tonumber(list_get(deco_ids, slot))
+                        if id and id >= 1 and id <= 1000 then
+                            equipped_decorations[id] = (equipped_decorations[id] or 0) + 1
+                        end
+                    end
+                end
+                if is_weapon then
+                    add_equipped_rampage_deco(eq, equipped_decorations)
+                end
+            end
 
             if is_talisman then
                 local sk_list = safe_call(eq, "get_TalismanSkillIdList") or safe_field(eq, "_TalismanSkillIdList")
@@ -315,27 +414,33 @@ local function scan_equipment_box(dm)
                     }
                 end
             elseif is_weapon then
-                local name = resolve_weapon_name(eq)
+                local name = weapon_name
                 if name ~= "" and not seen_weapons[name] then
                     seen_weapons[name] = true
                     weapons[#weapons + 1] = name
                 end
             elseif is_armor then
                 local name = resolve_armor_name(eq)
-                if name ~= "" and not seen_armor[name] then
-                    seen_armor[name] = true
-                    armor[#armor + 1] = name
+                local id = resolve_armor_catalog_id(eq)
+                if not id and not armor_diagnostics then
+                    armor_diagnostics = describe_armor_id_members(eq)
+                end
+                local key = id or name
+                if key ~= "" and not seen_armor[key] then
+                    seen_armor[key] = true
+                    armor[#armor + 1] = id and { id = id, name = name } or name
                 end
             end
         end
     end
 
-    return weapons, armor, talismans
+    return weapons, armor, talismans, armor_diagnostics, equipped_decorations, equipment_with_deco_lists
 end
 
 local function resolve_deco_name_by_id(deco_id)
     if deco_id == nil or deco_id == 0 then return "" end
-    local resolved = safe_static_call("snow.data.DataShortcut", "getName(snow.data.DataDef.DecorationsId)", deco_id)
+    local resolved = safe_static_call("snow.data.DataShortcut", "getName(snow.equip.DecorationsId)", deco_id)
+        or safe_static_call("snow.data.DataShortcut", "getName(snow.data.DataDef.DecorationsId)", deco_id)
         or safe_static_call("snow.data.DataShortcut", "getName(snow.data.ContentsIdSystem.DecorationsId)", deco_id)
         or safe_static_call("snow.data.DataShortcut", "getName(snow.data.DataDef.HyakuryuDecoId)", deco_id)
         or safe_static_call("snow.data.DataShortcut", "getName(snow.data.ContentsIdSystem.HyakuryuDecoId)", deco_id)
@@ -343,9 +448,8 @@ local function resolve_deco_name_by_id(deco_id)
     return clean_str(resolved)
 end
 
-local function resolve_deco_name(entry)
-    if entry == nil then return "" end
-    local deco_id = safe_call(entry, "get_DecorationsId")
+local function read_deco_id(entry)
+    return safe_call(entry, "get_DecorationsId")
         or safe_call(entry, "get_DecoId")
         or safe_call(entry, "get_HyakuryuDecoId")
         or safe_call(entry, "get_Id")
@@ -353,6 +457,9 @@ local function resolve_deco_name(entry)
         or safe_field(entry, "_DecoId")
         or safe_field(entry, "_HyakuryuDecoId")
         or safe_field(entry, "_Id")
+end
+
+local function resolve_deco_name(entry, deco_id)
     if deco_id ~= nil then
         local resolved = resolve_deco_name_by_id(deco_id)
         if resolved ~= "" then return resolved end
@@ -374,22 +481,27 @@ local function resolve_deco_name(entry)
 end
 
 local function read_deco_count(entry)
+    -- DecorationsInventoryData exposes getCount(), distinct from get_Count().
+    local count = safe_call(entry, "getCount()")
+    if type(count) == "number" and count >= 0 and count <= 999 then return math.floor(count) end
+
     local total_num = safe_call(entry, "get_TotalNum") or safe_field(entry, "_TotalNum")
     if type(total_num) == "number" and total_num > 0 and total_num <= 999 then return math.floor(total_num) end
 
     local box_num = safe_call(entry, "get_PossessionNum")
         or safe_call(entry, "get_HaveNum")
-        or safe_call(entry, "get_Count")
-        or safe_call(entry, "get_Num")
         or safe_call(entry, "get_StockNum")
         or safe_call(entry, "get_InventoryNum")
         or safe_call(entry, "get_BoxNum")
         or safe_field(entry, "_PossessionNum")
         or safe_field(entry, "_HaveNum")
-        or safe_field(entry, "_Count")
-        or safe_field(entry, "_Num")
         or safe_field(entry, "_StockNum")
         or safe_field(entry, "_InventoryNum")
+        or safe_field(entry, "_BoxNum")
+        or safe_call(entry, "get_Count")
+        or safe_call(entry, "get_Num")
+        or safe_field(entry, "_Count")
+        or safe_field(entry, "_Num")
         or 0
 
     local eq_num = safe_call(entry, "get_EquippedNum") or safe_field(entry, "_EquippedNum") or 0
@@ -398,30 +510,18 @@ local function read_deco_count(entry)
     return math.floor(math.max(box_num, eq_num))
 end
 
-local function is_excluded_deco_member(lname)
-    return lname:find("slot")
-        or lname:find("talisman")
-        or lname:find("material")
-        or lname:find("scrap")
-        or lname:find("flag")
-        or lname:find("unlock")
-        or lname:find("point")
-        or lname:find("skill")
-        or lname:find("recipe")
-        or lname:find("product")
-        or lname:find("quest")
-        or lname:find("weapon")
-        or lname:find("armor")
-        or lname:find("preset")
-        or lname:find("category")
-end
-
-local function scan_decorations_box(dm)
+local function scan_decorations_box(dm, equipped_decorations)
     local decos = {}
     local seen_counts = {}
+    local loose_counts = {}
+    local names_by_id = {}
     local visited_containers = {}
     local visited_lists = {}
     local containers = {}
+    local found_list = false
+    local sample_entry = nil
+    local count_samples = {}
+    local sampled_names = {}
 
     local function add_container(obj)
         if obj == nil or type(obj) == "number" or type(obj) == "string" or type(obj) == "boolean" then return end
@@ -431,7 +531,7 @@ local function scan_decorations_box(dm)
         containers[#containers + 1] = obj
     end
 
-    local function scan_deco_list(inv_list)
+    local function scan_deco_list(inv_list, is_primary_list)
         if inv_list == nil then return end
         local list_key = tostring(inv_list)
         if visited_lists[list_key] then return end
@@ -445,11 +545,37 @@ local function scan_decorations_box(dm)
             local entry = list_get(inv_list, i)
             -- Only read managed decoration objects (skip raw int/bitflag arrays like material categories)
             if entry ~= nil and type(entry) ~= "number" and type(entry) ~= "boolean" and type(entry) ~= "string" then
+                sample_entry = sample_entry or entry
                 local qty = read_deco_count(entry)
-                if qty > 0 and qty <= 999 then
-                    local name = resolve_deco_name(entry)
-                    if name ~= "" then
+                local deco_id = read_deco_id(entry)
+                local name = qty > 0 and resolve_deco_name(entry, deco_id) or ""
+                if name ~= "" then
+                    local numeric_id = tonumber(deco_id)
+                    if numeric_id then names_by_id[numeric_id] = name end
+                    if not sampled_names[name] and (#count_samples < 2 or name == "Blaze Jewel 1") then
+                        sampled_names[name] = true
+                        if name == "Blaze Jewel 1" then sample_entry = entry end
+                        local sample = { name = name, id = numeric_id, exported = qty, getters = {}, fields = {} }
+                        for _, method in ipairs({ "getCount()", "getRemainingCount()" }) do
+                            local value = safe_call(entry, method)
+                            if type(value) == "number" then sample.getters[method] = value end
+                        end
+                        -- Read the same explicitly named count properties used by the exporter.
+                        for _, key in ipairs({ "TotalNum", "PossessionNum", "HaveNum", "StockNum",
+                            "InventoryNum", "BoxNum", "Count", "Num", "EquippedNum" }) do
+                            local value = safe_call(entry, "get_" .. key)
+                            if type(value) == "number" then sample.getters[key] = value end
+                            value = safe_field(entry, "_" .. key)
+                            if type(value) == "number" then sample.fields[key] = value end
+                        end
+                        count_samples[#count_samples + 1] = sample
+                    end
+                    if qty <= 999 then
+                        found_list = true
                         list_counts[name] = (list_counts[name] or 0) + qty
+                        if is_primary_list and safe_call(entry, "isAnyEquipmentApplied()") == false then
+                            loose_counts[name] = (loose_counts[name] or 0) + qty
+                        end
                     end
                 end
             end
@@ -481,44 +607,10 @@ local function scan_decorations_box(dm)
             add_container(safe_call(root, "get_" .. bname) or safe_field(root, "_" .. bname))
         end
 
-        -- Reflection discovery of decoration sub-boxes only (strictly excludes material/weapon/flag objects)
-        local ok_td, td = pcall(function() return root:get_type_definition() end)
-        if ok_td and td ~= nil then
-            local ok_m, methods = pcall(function() return td:get_methods() end)
-            if ok_m and methods ~= nil then
-                for _, m in ipairs(methods) do
-                    local ok_n, mname = pcall(function() return m:get_name() end)
-                    local ok_p, nparams = pcall(function() return m:get_num_params() end)
-                    if ok_n and ok_p and type(mname) == "string" and nparams == 0 then
-                        local lm = mname:lower()
-                        if (lm:find("deco") or lm:find("hyakuryudeco")) and (lm:find("box") or lm:find("data") or lm:find("info")) and (not is_excluded_deco_member(lm)) then
-                            local ok_c, res = pcall(function() return m:call(root) end)
-                            if ok_c and res ~= nil then
-                                add_container(res)
-                            end
-                        end
-                    end
-                end
-            end
-            local ok_f, fields = pcall(function() return td:get_fields() end)
-            if ok_f and fields ~= nil then
-                for _, f in ipairs(fields) do
-                    local ok_n, fname = pcall(function() return f:get_name() end)
-                    if ok_n and type(fname) == "string" then
-                        local lf = fname:lower()
-                        if (lf:find("deco") or lf:find("hyakuryudeco")) and (lf:find("box") or lf:find("data") or lf:find("info")) and (not is_excluded_deco_member(lf)) then
-                            local ok_d, res = pcall(function() return f:get_data(root) end)
-                            if ok_d and res ~= nil then
-                                add_container(res)
-                            end
-                        end
-                    end
-                end
-            end
-        end
     end
 
     local explicit_lists = {
+        "NonFilteredDecorationsInventoryList",
         "DecoInventoryList", "DecorationsInventoryList", "HyakuryuDecoInventoryList",
         "HyakuryuDecorationsInventoryList", "PlDecorationsInfoList", "PlDecoInfoList",
         "DecoBoxList", "DecorationsList", "DecoList", "DecoStockList",
@@ -530,100 +622,36 @@ local function scan_decorations_box(dm)
         for _, lname in ipairs(explicit_lists) do
             local is_deco_specific = lname:lower():find("deco") ~= nil
             if (not is_root) or is_deco_specific then
-                scan_deco_list(safe_call(container, "get_" .. lname) or safe_field(container, "_" .. lname))
+                scan_deco_list(
+                    safe_call(container, "get_" .. lname) or safe_field(container, "_" .. lname),
+                    lname == "NonFilteredDecorationsInventoryList"
+                )
             end
         end
 
-        -- Reflection discovery of decoration list/array on container
-        local ok_td, td = pcall(function() return container:get_type_definition() end)
-        if ok_td and td ~= nil then
-            local ok_m, methods = pcall(function() return td:get_methods() end)
-            if ok_m and methods ~= nil then
-                for _, m in ipairs(methods) do
-                    local ok_n, mname = pcall(function() return m:get_name() end)
-                    local ok_p, nparams = pcall(function() return m:get_num_params() end)
-                    if ok_n and ok_p and type(mname) == "string" and nparams == 0 then
-                        local lm = mname:lower()
-                        local relevant = lm:find("deco") or ((not is_root) and (lm:find("list") or lm:find("inventory") or lm:find("stock")))
-                        if relevant and (not is_excluded_deco_member(lm)) then
-                            local ok_c, res = pcall(function() return m:call(container) end)
-                            if ok_c and res ~= nil and list_count(res) > 0 then
-                                scan_deco_list(res)
-                            end
-                        end
-                    end
-                end
-            end
-            local ok_f, fields = pcall(function() return td:get_fields() end)
-            if ok_f and fields ~= nil then
-                for _, f in ipairs(fields) do
-                    local ok_n, fname = pcall(function() return f:get_name() end)
-                    if ok_n and type(fname) == "string" then
-                        local lf = fname:lower()
-                        local relevant = lf:find("deco") or ((not is_root) and (lf:find("list") or lf:find("inventory") or lf:find("stock")))
-                        if relevant and (not is_excluded_deco_member(lf)) then
-                            local ok_d, res = pcall(function() return f:get_data(container) end)
-                            if ok_d and res ~= nil and list_count(res) > 0 then
-                                scan_deco_list(res)
-                            end
-                        end
-                    end
-                end
-            end
-        end
     end
 
-    -- Fallback: query typed enum IDs against any 1-arg deco count getter on PlEquipBox / DataManager
-    if next(seen_counts) == nil then
-        local enum_types = {
-            "snow.data.DataDef.DecorationsId",
-            "snow.data.ContentsIdSystem.DecorationsId",
-            "snow.data.DataDef.HyakuryuDecoId",
-            "snow.data.ContentsIdSystem.HyakuryuDecoId",
-        }
-        local fallback_targets = {}
-        if equip_box ~= nil then fallback_targets[#fallback_targets + 1] = equip_box end
-        if dm ~= nil then fallback_targets[#fallback_targets + 1] = dm end
-        if equip_dm ~= nil then fallback_targets[#fallback_targets + 1] = equip_dm end
-        if deco_dm ~= nil then fallback_targets[#fallback_targets + 1] = deco_dm end
+    for _, sample in ipairs(count_samples) do
+        sample.box = seen_counts[sample.name] or 0
+    end
 
-        for _, target in ipairs(fallback_targets) do
-            local ok_td, td = pcall(function() return target:get_type_definition() end)
-            if ok_td and td ~= nil then
-                local ok_m, methods = pcall(function() return td:get_methods() end)
-                if ok_m and methods ~= nil then
-                    for _, m in ipairs(methods) do
-                        local ok_n, mname = pcall(function() return m:get_name() end)
-                        local ok_p, nparams = pcall(function() return m:get_num_params() end)
-                        if ok_n and ok_p and type(mname) == "string" and nparams == 1 then
-                            local lm = mname:lower()
-                            if (lm:find("deco") or lm:find("hyakuryudeco")) and (lm:find("num") or lm:find("count") or lm:find("have")) and (not is_excluded_deco_member(lm)) then
-                                for _, etype in ipairs(enum_types) do
-                                    local etd = sdk.find_type_definition(etype)
-                                    if etd ~= nil then
-                                        local ok_ef, efields = pcall(function() return etd:get_fields() end)
-                                        if ok_ef and efields ~= nil then
-                                            for _, ef in ipairs(efields) do
-                                                local ok_ev, eval = pcall(function() return ef:get_data(nil) end)
-                                                if ok_ev and type(eval) == "number" and eval > 0 then
-                                                    local ok_cnt, cnt = pcall(function() return m:call(target, eval) end)
-                                                    if ok_cnt and type(cnt) == "number" and cnt > 0 and cnt <= 999 then
-                                                        local dname = resolve_deco_name_by_id(eval)
-                                                        if dname ~= "" then
-                                                            seen_counts[dname] = math.max(seen_counts[dname] or 0, math.floor(cnt))
-                                                        end
-                                                    end
-                                                end
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
+    local equipped_by_name = {}
+    for id, qty in pairs(equipped_decorations) do
+        local name = names_by_id[id] or decoration_names_by_id[id] or resolve_deco_name_by_id(id)
+        if name ~= "" then equipped_by_name[name] = (equipped_by_name[name] or 0) + qty end
+    end
+
+    for name, qty in pairs(equipped_by_name) do
+        -- The box may already contain rows for equipped decorations. Only add
+        -- stock explicitly identified as loose, and keep the larger observed total.
+        seen_counts[name] = math.max(seen_counts[name] or 0, (loose_counts[name] or 0) + qty)
+        found_list = true
+    end
+
+    for _, sample in ipairs(count_samples) do
+        sample.loose = loose_counts[sample.name] or 0
+        sample.equipped = equipped_by_name[sample.name] or 0
+        sample.exported = seen_counts[sample.name] or 0
     end
 
     for name, qty in pairs(seen_counts) do
@@ -634,7 +662,46 @@ local function scan_decorations_box(dm)
     end
     table.sort(decos, function(a, b) return a.name < b.name end)
 
-    return decos
+    local diagnostic = nil
+    if not found_list or sample_entry then
+        diagnostic = {}
+        local seen_types = {}
+        add_container(sample_entry)
+        for _, container in ipairs(containers) do
+            local ok, td = pcall(function() return container:get_type_definition() end)
+            if ok and td and not seen_types[tostring(td)] then
+                seen_types[tostring(td)] = true
+                local ok_name, type_name = pcall(function() return td:get_full_name() end)
+                local entry = { type = ok_name and type_name or "unknown", members = {} }
+                -- Inspect metadata only. Never call a game method discovered here.
+                local function add_member(member, kind)
+                    local ok_member, name = pcall(function() return member:get_name() end)
+                    if not ok_member or type(name) ~= "string" then return end
+                    local lower = name:lower()
+                    if lower:find("deco") or lower:find("stock")
+                        or (container == sample_entry and (lower:find("num") or lower:find("count")
+                            or lower:find("equip") or lower:find("id") or lower:find("name"))) then
+                        local detail = kind .. " " .. name
+                        if kind == "method" and container == sample_entry then
+                            local ok_params, count = pcall(function() return member:get_num_params() end)
+                            if ok_params and type(count) == "number" then detail = detail .. " [" .. count .. " params]" end
+                        end
+                        entry.members[#entry.members + 1] = detail
+                    end
+                end
+                local ok_methods, methods = pcall(function() return td:get_methods() end)
+                if ok_methods then
+                    for _, method in ipairs(methods or {}) do add_member(method, "method") end
+                end
+                local ok_fields, fields = pcall(function() return td:get_fields() end)
+                if ok_fields then
+                    for _, field in ipairs(fields or {}) do add_member(field, "field") end
+                end
+                diagnostic[#diagnostic + 1] = entry
+            end
+        end
+    end
+    return decos, found_list, diagnostic, count_samples
 end
 
 local function build_snapshot()
@@ -645,18 +712,31 @@ local function build_snapshot()
 
     local profile = read_ranks(dm)
     local materials, mat_count = scan_item_box(dm)
-    local weapons, armor, talismans = scan_equipment_box(dm)
-    local decorations = scan_decorations_box(dm)
+    local weapons, armor, talismans, armor_diagnostics, equipped_decorations, equipment_with_deco_lists = scan_equipment_box(dm)
+    local decorations, found_decorations, decoration_diagnostics, decoration_count_samples =
+        scan_decorations_box(dm, equipped_decorations)
+    local equipped_decoration_ids = {}
+    for id, quantity in pairs(equipped_decorations) do
+        equipped_decoration_ids[#equipped_decoration_ids + 1] = { id = id, quantity = quantity }
+    end
+    table.sort(equipped_decoration_ids, function(a, b) return a.id < b.id end)
 
     local payload = {
         schema = SCHEMA_VERSION,
+        exporterRevision = 2,
         exportedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
         profile = profile,
         materials = materials,
         talismans = talismans,
         weapons = weapons,
         armor = armor,
-        decorations = decorations,
+        armorDiagnostics = armor_diagnostics,
+        decorations = found_decorations and decorations or nil,
+        decorationCountsComplete = found_decorations == true,
+        decorationCountSamples = decoration_count_samples,
+        decorationEquipmentListsRead = equipment_with_deco_lists,
+        equippedDecorationIdCounts = equipped_decoration_ids,
+        decorationDiagnostics = decoration_diagnostics,
     }
 
     last_summary = {
@@ -664,13 +744,20 @@ local function build_snapshot()
         mr = profile.mr,
         ar = profile.ar,
         materials = mat_count,
-        talismans = #talismans,
-        weapons = #weapons,
-        armor = #armor,
+        talismans = talismans and #talismans or 0,
+        weapons = weapons and #weapons or 0,
+        armor = armor and #armor or 0,
         decorations = #decorations,
+        found_decorations = found_decorations,
     }
 
     return payload, nil
+end
+
+local function save_payload(payload)
+    if not json or type(json.dump_file) ~= "function" then return false end
+    local ok, result = pcall(json.dump_file, OUTPUT_FILE, payload)
+    return ok and result ~= false
 end
 
 local function serialize_payload(payload)
@@ -692,9 +779,7 @@ re.on_draw_ui(function()
             if err then
                 status_msg = "Error: " .. err
             else
-                local ok = pcall(json.dump_file, OUTPUT_FILE, payload)
-                last_json_cache = serialize_payload(payload)
-                if ok then
+                if save_payload(payload) then
                     status_msg = string.format(
                         "Saved reframework/data/%s (%d materials, %d talismans, %d weapons, %d armor, %d decos)",
                         OUTPUT_FILE,
@@ -717,35 +802,32 @@ re.on_draw_ui(function()
             if err then
                 status_msg = "Error: " .. err
             else
-                last_json_cache = serialize_payload(payload)
+                local clipboard_json = serialize_payload(payload)
                 local copied = false
                 if sdk and type(sdk.copy_to_clipboard) == "function" then
-                    local ok, res = pcall(sdk.copy_to_clipboard, last_json_cache)
+                    local ok, res = pcall(sdk.copy_to_clipboard, clipboard_json)
                     copied = ok and (res ~= false)
                 end
                 if not copied and imgui and type(imgui.set_clipboard_text) == "function" then
-                    local ok = pcall(imgui.set_clipboard_text, last_json_cache)
+                    local ok = pcall(imgui.set_clipboard_text, clipboard_json)
                     copied = ok
                 end
                 if copied then
                     status_msg = "Copied JSON snapshot to clipboard! Paste or drop into Elgado Forge."
+                elseif save_payload(payload) then
+                    status_msg = "Saved reframework/data/" .. OUTPUT_FILE .. " (clipboard unavailable)."
                 else
-                    pcall(json.dump_file, OUTPUT_FILE, payload)
-                    status_msg = "Saved reframework/data/" .. OUTPUT_FILE .. " (clipboard unavailable on this REFramework build)."
+                    status_msg = "Could not copy or save the snapshot."
                 end
             end
         end
 
-        if imgui and type(imgui.text_colored) == "function" then
-            local ok = pcall(imgui.text_colored, status_msg, 0xFF53A8D4)
-            if not ok then
-                imgui.text(status_msg)
-            end
-        else
-            imgui.text(status_msg)
-        end
+        imgui.text(status_msg)
 
         if last_summary then
+            if not last_summary.found_decorations then
+                imgui.text("Decoration list unavailable. Existing decoration inventory will be kept.")
+            end
             imgui.text(string.format(
                 "Last Scan -> HR %d | MR %d | AR %d | Materials: %d | Talismans: %d | Weapons: %d | Armor: %d | Decos: %d",
                 last_summary.hr,

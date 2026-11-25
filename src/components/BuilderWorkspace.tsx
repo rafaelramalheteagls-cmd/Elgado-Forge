@@ -19,16 +19,26 @@ import {
   WEAPON_CLASSES,
   WEAPONS_DB,
 } from '../data/sunbreakDb';
+import { estimateGunlanceFullBurst, getBowgunAmmoOptions, getBowgunHandling, getPrimaryBowgunAmmo } from '../data/weaponMechanics';
+import { EMPTY_ARMOR_AUGMENT } from '../data/quriousDefaults';
+import { getArmorCraftingMaterials, getDecorationCraftingMaterials, getEquipmentCraftingUnlock, getEquipmentCraftingZenny, getRampageCraftingCategory, getWeaponCraftingOptions } from '../data/mhriceAdapter';
+import { ANOMALY_MATERIAL_SOURCES } from '../data/mhriceAdapter';
 import {
   calculateBuildCraftingSummary,
   calculateBuildStats,
+  rampageDecorationFits,
+  resolveRecommendationInventory,
+  resolveRampageSlot,
   resolveArmorSlots,
+  resolveMechanicsWeapon,
   resolveWeaponSlots,
 } from '../engine/damageCalculator';
+import { createCraftingPlanner, craftingRoute, getAnomalyFarmOptions, recordCraftedItem, summarizeCraftingForecast } from '../engine/craftingPlanner';
 import {
   ArmorSlot,
   BuildLoadout,
   InventoryState,
+  QuriousArmorAugment,
   TalismanItem,
   WeaponClass,
 } from '../types/sunbreak';
@@ -37,11 +47,13 @@ import { SharpnessBar } from './SharpnessBar';
 
 interface BuilderWorkspaceProps {
   loadout: BuildLoadout;
+  masterRank: number;
+  researchLevel: number;
   savedBuilds: BuildLoadout[];
   favoriteIds: string[];
   inventory: InventoryState;
   onUpdateLoadout: (next: BuildLoadout) => void;
-  onUpdateInventory: (next: InventoryState) => void;
+  onUpdateInventory: React.Dispatch<React.SetStateAction<InventoryState>>;
   onSaveBuild: () => void;
   onToggleFavorite: (buildId: string) => void;
   onSelectSavedBuild: (build: BuildLoadout) => void;
@@ -63,6 +75,8 @@ const ARMOR_SLOTS: Array<{
 
 export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
   loadout,
+  masterRank,
+  researchLevel,
   savedBuilds,
   favoriteIds,
   inventory,
@@ -78,13 +92,41 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
   const [openArmorQurious, setOpenArmorQurious] = useState<ArmorSlot | null>(null);
   const [showCharmEditor, setShowCharmEditor] = useState(false);
   const [savedFilter, setSavedFilter] = useState<'all' | 'favorites'>('all');
+  const [craftConfirmation, setCraftConfirmation] = useState<{
+    itemId: string; inventory: InventoryState; build: BuildLoadout; masterRank: number;
+  }>();
+  const [farmReachableOnly, setFarmReachableOnly] = useState(false);
+  const [armorPlan, setArmorPlan] = useState<{ base: BuildLoadout; slot: ArmorSlot; augment: QuriousArmorAugment }>();
+  const activeArmorPlan = armorPlan?.base === loadout ? armorPlan : undefined;
 
-  const stats = useMemo(() => calculateBuildStats(loadout), [loadout]);
+  const stats = useMemo(() => calculateBuildStats(loadout, { wexUptime: 100, armorcharmTalon: true }), [loadout]);
+  const plannedStats = useMemo(() => {
+    if (!activeArmorPlan) return;
+    return calculateBuildStats({
+      ...loadout,
+      quriousArmor: { ...loadout.quriousArmor, [activeArmorPlan.slot]: activeArmorPlan.augment },
+    }, { wexUptime: 100, armorcharmTalon: true });
+  }, [activeArmorPlan, loadout]);
+  const plannedSkillChanges = plannedStats
+    ? [...new Set([...Object.keys(stats.skills), ...Object.keys(plannedStats.skills)])]
+      .filter(id => (stats.skills[id] ?? 0) !== (plannedStats.skills[id] ?? 0))
+    : [];
   const crafting = useMemo(
     () => calculateBuildCraftingSummary(loadout, inventory),
     [loadout, inventory]
   );
+  const craftingInventory = useMemo(() => resolveRecommendationInventory(inventory), [inventory]);
+  const craftPlanner = useMemo(() => createCraftingPlanner(craftingInventory, masterRank), [craftingInventory, masterRank]);
+  const craftPlan = useMemo(() => craftPlanner.plan(crafting.pieceBreakdowns), [craftPlanner, crafting]);
+  const forecast = useMemo(() => summarizeCraftingForecast(craftPlanner, crafting.pieceBreakdowns), [craftPlanner, crafting]);
   const weapon = getWeaponById(loadout.weaponId) ?? WEAPONS_DB[0];
+  const mechanicsWeapon = weapon.weaponClass === 'Gunlance' || weapon.damageType === 'Shot'
+    ? resolveMechanicsWeapon(weapon)
+    : weapon;
+  const fullBurst = estimateGunlanceFullBurst(mechanicsWeapon, stats, 0, 1);
+  const ammoOptions = getBowgunAmmoOptions(mechanicsWeapon);
+  const primaryAmmo = getPrimaryBowgunAmmo(mechanicsWeapon, loadout.bowgunAmmo);
+  const ammoHandling = getBowgunHandling(mechanicsWeapon, stats.skills, loadout.bowgunAmmo);
   const weaponSlots = resolveWeaponSlots(loadout);
   const isFavorited = favoriteIds.includes(loadout.id);
 
@@ -97,6 +139,7 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
       ...loadout,
       weaponClass: nextClass,
       weaponId: firstMatch.id,
+      bowgunAmmo: undefined,
       decorations: {
         ...loadout.decorations,
         weapon: ['', '', ''],
@@ -137,6 +180,9 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
   }, [savedBuilds, favoriteIds, savedFilter]);
 
   const rampDeco = getDecorationById(loadout.rampageDecoId);
+  const rampageUpgrade = loadout.quriousWeapon?.extraSlotLevel;
+  const rampageSlot = resolveRampageSlot(weapon, rampageUpgrade);
+  const rampDecoFits = rampageDecorationFits(loadout.rampageDecoId, weapon, rampageUpgrade);
 
   return (
     <div className="mx-auto max-w-[1440px] px-6 py-6 space-y-6">
@@ -432,16 +478,16 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
               <button
                 type="button"
                 onClick={() =>
-                  weapon.rampageSlot > 0 &&
-                  onOpenDrawer({ kind: 'rampage', maxSlotLevel: weapon.rampageSlot })
+                  rampageSlot > 0 &&
+                  onOpenDrawer({ kind: 'rampage', maxSlotLevel: rampageSlot })
                 }
-                disabled={weapon.rampageSlot === 0}
+                disabled={rampageSlot === 0}
                 className="rounded-md border border-white/15 bg-[#0B0D10] px-2.5 py-1 text-xs font-medium text-[#ECEFF4] hover:border-[#D4A853]/60 disabled:opacity-40"
               >
                 {rampDeco
-                  ? `${rampDeco.name}`
-                  : weapon.rampageSlot > 0
-                  ? `Empty Rampage Lv${weapon.rampageSlot}`
+                  ? `${rampDeco.name}${rampDecoFits ? '' : ' (Incompatible)'}`
+                  : rampageSlot > 0
+                  ? `Empty Rampage Lv${rampageSlot}`
                   : 'No Rampage Slot'}
               </button>
             </div>
@@ -525,7 +571,7 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                 </div>
                 <div>
                   <label className="mb-1 block text-[11px] text-[#98A2B3]">
-                    Extra Slot Upgrades
+                    Rampage Slot Upgrade
                   </label>
                   <select
                     value={loadout.quriousWeapon.extraSlotLevel}
@@ -559,11 +605,18 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                 qArmor?.slotUpgrade ?? 0
               );
               const isQOpen = openArmorQurious === slot;
+              const plan = activeArmorPlan?.slot === slot ? activeArmorPlan : undefined;
+              const editedAugment = plan?.augment ?? qArmor ?? EMPTY_ARMOR_AUGMENT;
+              const updateAugment = (changes: Partial<QuriousArmorAugment>) => {
+                const augment = { ...editedAugment, ...changes };
+                if (plan) setArmorPlan({ ...plan, augment });
+                else onUpdateLoadout({ ...loadout, quriousArmor: { ...loadout.quriousArmor, [slot]: augment } });
+              };
 
               const nativeSkills = piece
                 ? Object.entries(piece.skills)
-                    .filter(([, pts]) => pts > 0)
-                    .map(([sId, pts]) => `${getSkillById(sId)?.name ?? sId} ${pts}`)
+                    .filter(([sId, pts]) => pts > Number(qArmor?.skillRemovedId === sId))
+                      .map(([sId, pts]) => `${getSkillById(sId)?.name ?? sId} ${pts - Number(qArmor?.skillRemovedId === sId)}`)
                 : [];
               if (qArmor?.skillAddedId && qArmor.skillAddedPoints > 0) {
                 nativeSkills.push(
@@ -618,7 +671,10 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
 
                       <button
                         type="button"
-                        onClick={() => setOpenArmorQurious(isQOpen ? null : slot)}
+                        onClick={() => {
+                          setOpenArmorQurious(isQOpen ? null : slot);
+                          setArmorPlan(undefined);
+                        }}
                         className="ml-1 inline-flex items-center gap-1 rounded-md border border-white/10 bg-[#0B0D10] px-2.5 py-1.5 text-[11px] font-medium text-[#98A2B3] hover:text-[#ECEFF4]"
                         title="Qurious Armor Crafting"
                       >
@@ -643,24 +699,13 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                   {isQOpen && (
                     <div className="mt-3 grid grid-cols-1 gap-3 border-t border-white/[0.06] pt-3 sm:grid-cols-3">
                       <div>
-                        <label className="mb-1 block text-[11px] text-[#98A2B3]">
+                        <label htmlFor={`qurious-skill-${slot}`} className="mb-1 block text-[11px] text-[#98A2B3]">
                           Qurious Added Skill
                         </label>
                         <select
-                          value={qArmor?.skillAddedId ?? ''}
-                          onChange={(e) =>
-                            onUpdateLoadout({
-                              ...loadout,
-                              quriousArmor: {
-                                ...loadout.quriousArmor,
-                                [slot]: {
-                                  ...qArmor,
-                                  skillAddedId: e.target.value,
-                                  skillAddedPoints: e.target.value ? 1 : 0,
-                                },
-                              },
-                            })
-                          }
+                          id={`qurious-skill-${slot}`}
+                          value={editedAugment.skillAddedId}
+                          onChange={(e) => updateAugment({ skillAddedId: e.target.value, skillAddedPoints: e.target.value ? 1 : 0 })}
                           className="w-full rounded border border-white/15 bg-[#0B0D10] px-2 py-1.5 text-xs text-[#ECEFF4]"
                         >
                           <option value="">None</option>
@@ -671,24 +716,25 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                           ))}
                         </select>
                       </div>
+                      <label className="block text-[11px] text-[#98A2B3]">
+                        Qurious Removed Skill
+                        <select
+                          value={editedAugment.skillRemovedId ?? ''}
+                          onChange={(e) => updateAugment({ skillRemovedId: e.target.value || undefined })}
+                          className="mt-1 w-full rounded border border-white/15 bg-[#0B0D10] px-2 py-1.5 text-xs text-[#ECEFF4]"
+                        >
+                          <option value="">None</option>
+                          {Object.keys(piece?.skills ?? {}).map(id => <option key={id} value={id}>{getSkillById(id)?.name ?? id} (−1)</option>)}
+                        </select>
+                      </label>
                       <div>
-                        <label className="mb-1 block text-[11px] text-[#98A2B3]">
+                        <label htmlFor={`qurious-slots-${slot}`} className="mb-1 block text-[11px] text-[#98A2B3]">
                           Slot Upgrade
                         </label>
                         <select
-                          value={qArmor?.slotUpgrade ?? 0}
-                          onChange={(e) =>
-                            onUpdateLoadout({
-                              ...loadout,
-                              quriousArmor: {
-                                ...loadout.quriousArmor,
-                                [slot]: {
-                                  ...qArmor,
-                                  slotUpgrade: Number(e.target.value),
-                                },
-                              },
-                            })
-                          }
+                          id={`qurious-slots-${slot}`}
+                          value={editedAugment.slotUpgrade}
+                          onChange={(e) => updateAugment({ slotUpgrade: Number(e.target.value) })}
                           className="w-full rounded border border-white/15 bg-[#0B0D10] px-2 py-1.5 text-xs text-[#ECEFF4]"
                         >
                           <option value={0}>Base Slots</option>
@@ -696,31 +742,34 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                           <option value={2}>+2 Slot Levels</option>
                         </select>
                       </div>
-                      <div>
-                        <label className="mb-1 block text-[11px] text-[#98A2B3]">
-                          Bonus Defense ({qArmor?.defenseDelta ?? 0})
-                        </label>
+                      <label className="block text-[11px] text-[#98A2B3]">
+                        Defense Change
                         <input
-                          type="range"
-                          min={0}
-                          max={30}
-                          step={2}
-                          value={qArmor?.defenseDelta ?? 0}
-                          onChange={(e) =>
-                            onUpdateLoadout({
-                              ...loadout,
-                              quriousArmor: {
-                                ...loadout.quriousArmor,
-                                [slot]: {
-                                  ...qArmor,
-                                  defenseDelta: Number(e.target.value),
-                                },
-                              },
-                            })
-                          }
-                          className="w-full accent-[#D4A853]"
+                          key={`${loadout.id}-${plan ? 'preview' : 'current'}`}
+                          type="number"
+                          min={-(piece?.defense ?? 0)}
+                          defaultValue={editedAugment.defenseDelta}
+                          onBlur={(e) => {
+                            const defenseDelta = Math.max(-(piece?.defense ?? 0), Math.trunc(e.target.valueAsNumber || 0));
+                            e.target.value = String(defenseDelta);
+                            if (defenseDelta !== editedAugment.defenseDelta) updateAugment({ defenseDelta });
+                          }}
+                          className="mt-1 w-full rounded border border-white/15 bg-[#0B0D10] px-2 py-1.5 text-xs text-[#ECEFF4]"
                         />
+                      </label>
+                      <div className="self-end sm:col-span-2">
+                        <button type="button" onClick={() => setArmorPlan(plan ? undefined : { base: loadout, slot, augment: { ...editedAugment } })} className="rounded border border-white/15 px-3 py-1.5 text-xs text-[#D4A853]">
+                          {plan ? 'Discard Preview' : 'Preview Augment'}
+                        </button>
                       </div>
+                      {plan && plannedStats && (
+                        <div className="space-y-1 rounded border border-white/10 p-3 text-xs text-[#98A2B3] sm:col-span-3">
+                          <p className="font-medium text-[#ECEFF4]">Current → Planned</p>
+                          <p>Slots {resolvedSlots.join('–')} → {resolveArmorSlots(loadout[idKey], editedAugment.slotUpgrade).join('–')} · Total Defense {stats.defense} → {plannedStats.defense} · EFR {stats.effectiveRaw.toFixed(1)} → {plannedStats.effectiveRaw.toFixed(1)}</p>
+                          {plannedSkillChanges.length > 0 && <p>{plannedSkillChanges.map(id => `${getSkillById(id)?.name ?? id} ${stats.skills[id] ?? 0} → ${plannedStats.skills[id] ?? 0}`).join(' · ')}</p>}
+                          <p>Qurious roll legality and odds are not evaluated.</p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -949,29 +998,88 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                   Crafting & Material Checklist
                 </h2>
                 <p className="mt-0.5 text-xs text-[#98A2B3]">
-                  Tracks unowned gear in this set against your Material Box
+                  Tracks missing gear and decoration copies against your inventory
                 </p>
               </div>
               <div className="text-right font-mono-tabular text-xs">
                 <span className="text-[#ECEFF4]">
                   {crafting.ownedGearCount}/{crafting.totalGearCount} Gear Owned
                 </span>
-                {crafting.totalZenny > 0 && (
-                  <span className="ml-2 text-[#D4A853]">
-                    · {crafting.totalZenny.toLocaleString()}z
-                  </span>
-                )}
               </div>
             </div>
+            {crafting.pieceBreakdowns.length > 0 && (
+              <p className={craftPlan ? 'text-xs text-emerald-400' : 'text-xs text-[#98A2B3]'}>
+                {craftPlan ? 'Craftable Now · Materials available for all missing items' : 'Crafting & farming plan'}
+                {' · '}{forecast.incompleteCost ? 'Known cost' : 'Total cost'} {forecast.zenny.toLocaleString('en-US')} zenny
+              </p>
+            )}
+            {forecast.missingMaterials.size > 0 && (
+              <p className="text-xs text-amber-400">
+                Materials to farm · {[...forecast.missingMaterials].map(([name, count]) => `${name} ×${count}`).join(', ')}
+              </p>
+            )}
+            {[...forecast.missingMaterials].some(([name]) => ANOMALY_MATERIAL_SOURCES[name]?.length) && (
+              <details className="text-xs text-[#98A2B3]">
+                <summary className="cursor-pointer font-medium text-[#D4A853]">Where to farm</summary>
+                <label className="mt-2 flex items-center gap-2">
+                  <input type="checkbox" checked={farmReachableOnly} onChange={(event) => setFarmReachableOnly(event.target.checked)} className="accent-[#D4A853]" />
+                  Show only confirmed sources within your AR ({researchLevel})
+                </label>
+                <ul className="mt-2 space-y-2">
+                  {[...forecast.missingMaterials].map(([name, count]) => {
+                    const options = getAnomalyFarmOptions(name, researchLevel);
+                    if (!options) return null;
+                    const { reachable, higher, unspecified } = options;
+                    const formatRanges = (entries: typeof reachable, limit = Infinity) => entries.map(source => {
+                      const maxLevel = Math.min(source.maxLevel, limit);
+                      const levels = maxLevel === source.minLevel ? maxLevel : `${source.minLevel}–${maxLevel}`;
+                      return `${source.monster} Lv${levels}`;
+                    }).join(', ');
+                    return <li key={name}>
+                      <span className="font-medium text-[#ECEFF4]">{name} ×{count}</span>
+                      {reachable.length > 0 && <span className="block text-emerald-400">Within your AR · {formatRanges(reachable, researchLevel)}</span>}
+                      {!farmReachableOnly && higher.length > 0 && <span className="block">Higher AR required · {formatRanges(higher)}</span>}
+                      {!farmReachableOnly && unspecified.length > 0 && <span className="block">Investigation levels unconfirmed · {unspecified.join(', ')}</span>}
+                      {farmReachableOnly && reachable.length === 0 && <span className="block">No recorded investigation range within your AR.</span>}
+                    </li>;
+                  })}
+                </ul>
+              </details>
+            )}
 
             {/* Piece Status Strip */}
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {crafting.pieceBreakdowns
-                .filter((p) => !p.owned)
                 .map((p) => {
                   const isWeapon = p.slotLabel === 'Weapon';
                   const isDeco = p.slotLabel.startsWith('Decoration');
-                  const handleMarkCrafted = () => {
+                  const kind = isWeapon ? 'weapon' : isDeco ? 'decoration' : 'armor';
+                  const craftStep = craftPlan?.get(p.itemId) ?? craftPlanner.reserve(p.itemId, kind, p.missingCopies);
+                  const planned = craftStep ?? forecast.steps.get(p.itemId);
+                  const route = planned ? craftingRoute(planned) : [];
+                  const materials = isDeco ? getDecorationCraftingMaterials(p.itemId) : getArmorCraftingMaterials(p.itemId);
+                  const rampageCategory = isDeco ? getRampageCraftingCategory(p.itemId) : undefined;
+                  const weaponOptions = isWeapon ? getWeaponCraftingOptions(p.itemId) : [];
+                  const zenny = getEquipmentCraftingZenny(p.itemId);
+                  const unlock = getEquipmentCraftingUnlock(p.itemId);
+                  const isConfirming = craftConfirmation?.itemId === p.itemId
+                    && craftConfirmation.inventory === inventory && craftConfirmation.build === loadout
+                    && craftConfirmation.masterRank === masterRank;
+                  const handleConfirmCrafting = () => {
+                    if (!craftStep) return;
+                    setCraftConfirmation(undefined);
+                    onUpdateInventory(current => {
+                      if (current !== inventory) return current;
+                      const updated = recordCraftedItem(craftingInventory, kind, craftStep);
+                      if (updated === craftingInventory) return current;
+                      if (isWeapon) return { ...current, materials: updated.materials, ownedWeaponIds: updated.ownedWeaponIds };
+                      if (isDeco) return {
+                        ...current, materials: updated.materials, ownedDecoCounts: updated.ownedDecoCounts, ownedDecoIds: updated.ownedDecoIds,
+                      };
+                      return { ...current, materials: updated.materials, ownedArmorIds: updated.ownedArmorIds };
+                    });
+                  };
+                  const handleMarkOwned = () => {
                     if (isWeapon) {
                       onUpdateInventory({
                         ...inventory,
@@ -982,6 +1090,7 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                     } else if (isDeco) {
                       onUpdateInventory({
                         ...inventory,
+                        ownedDecoCounts: { ...inventory.ownedDecoCounts, [p.itemId]: p.requiredCopies - p.missingCopies + 1 },
                         ownedDecoIds: Array.from(
                           new Set([...inventory.ownedDecoIds, p.itemId])
                         ),
@@ -1003,106 +1112,102 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                     >
                       <div className="min-w-0">
                         <span className="block text-[11px] text-[#667085]">
-                          {p.slotLabel} ·{' '}
-                          <span
-                            className={
-                              p.readyToCraft ? 'text-emerald-400' : 'text-amber-400'
-                            }
-                          >
-                            {p.readyToCraft ? 'Ready to Forge' : 'Missing Mats'}
+                          {p.slotLabel}
+                        </span>
+                        {craftStep && (
+                          <span className="block text-emerald-400">
+                            Craftable Now · {route.length > 1 ? `${route.length}-step route` : craftStep.recipe.label ?? 'Forge'}
                           </span>
-                        </span>
+                        )}
+                        {craftStep?.recipe.category && route.length === 1 && (
+                          <span className="block text-[#98A2B3]">
+                            Planned materials · {craftStep.spent.map(material => `${material.name} ×${material.count}`).join(', ')}
+                          </span>
+                        )}
+                        {(!craftStep || route.length > 1) && route.length > 0 && (
+                          <ol className="mt-1 space-y-1 text-[#98A2B3]">
+                            {route.map(step => (
+                              <li key={step.itemId}>
+                                {step.recipe.label ?? 'Forge'}
+                                {isWeapon && ` → ${getWeaponById(step.itemId)?.name ?? step.itemId}`}
+                                {step.needsPredecessor && !step.prerequisite && ' · Obtain the prerequisite weapon first'}
+                                {(step.recipe.minMr ?? 0) > masterRank && ` · Requires MR ${step.recipe.minMr}`}
+                                {step.missingPoints > 0 && ` · ${step.missingPoints} ${step.recipe.category?.name} points short`}
+                                {route.length > 1 && (
+                                  <span className="block">
+                                    {[
+                                      step.recipe.zenny === undefined ? undefined : `${step.recipe.zenny.toLocaleString('en-US')} zenny`,
+                                      ...(step.recipe.unlock ?? []),
+                                      ...step.spent.map(material => `${material.name} ×${material.count}`),
+                                    ].filter(Boolean).join(' · ')}
+                                  </span>
+                                )}
+                              </li>
+                            ))}
+                          </ol>
+                        )}
                         <span className="block truncate font-medium text-[#ECEFF4]">
-                          {p.itemName}
+                          {p.itemName}{p.missingCopies > 1 ? ` ×${p.missingCopies}` : ''}
                         </span>
+                        {route.length > 1 ? null : weaponOptions.length > 0 ? weaponOptions.map((option) => (
+                          <div key={option.kind} className="mt-1 text-[#98A2B3]">
+                            <span className="font-medium">{option.label}</span>
+                            <ul>
+                              {option.unlock.length > 0 && <li>Unlock · {option.unlock.join(' · ')}</li>}
+                              {option.zenny !== undefined && <li>{option.zenny.toLocaleString('en-US')} zenny</li>}
+                              {option.materials.map((material) => (
+                                <li key={material.sourceId}>{material.name} ×{material.count}</li>
+                              ))}
+                              {option.category && <li>{option.category.name} · {option.category.points} pts</li>}
+                            </ul>
+                          </div>
+                        )) : materials || rampageCategory ? (
+                          <ul className="mt-1 text-[#98A2B3]" aria-label="Crafting materials for missing copies">
+                            {unlock && <li>Unlock · {unlock.join(' · ')}</li>}
+                            {zenny !== undefined && <li>{(zenny * p.missingCopies).toLocaleString('en-US')} zenny</li>}
+                            {materials?.map((material) => (
+                              <li key={material.sourceId}>{material.name} ×{material.count * p.missingCopies}</li>
+                            ))}
+                            {rampageCategory && <li>{rampageCategory.name} · {rampageCategory.points * p.missingCopies} pts</li>}
+                          </ul>
+                        ) : (
+                          <span className="block text-[#98A2B3]">Crafting materials unavailable.</span>
+                        )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleMarkCrafted}
-                        className="shrink-0 rounded border border-white/15 bg-[#171C24] px-2.5 py-1 text-[11px] font-medium text-[#ECEFF4] hover:border-[#D4A853] hover:text-[#D4A853]"
-                      >
-                        Mark Crafted
-                      </button>
+                      <div className="shrink-0 space-y-2 text-right">
+                        {isConfirming && craftStep ? (
+                          <>
+                            <p className="max-w-44 text-[11px] text-[#98A2B3]">
+                              Deduct materials from your box
+                              {isWeapon && route[0]?.recipe.predecessorId ? ' and consume the starting weapon' : ''}.
+                            </p>
+                            <button type="button" onClick={handleConfirmCrafting} className="block ml-auto rounded bg-[#D4A853] px-2.5 py-1 text-[11px] font-medium text-[#0B0D10]">
+                              Confirm Crafting{p.missingCopies > 1 ? ` ×${p.missingCopies}` : ''}
+                            </button>
+                            <button type="button" onClick={() => setCraftConfirmation(undefined)} className="text-[11px] text-[#98A2B3]">Cancel</button>
+                          </>
+                        ) : (
+                          <>
+                            {craftStep && (
+                              <button type="button" onClick={() => setCraftConfirmation({ itemId: p.itemId, inventory, build: loadout, masterRank })}
+                                className="block ml-auto rounded border border-[#D4A853]/50 px-2.5 py-1 text-[11px] text-[#D4A853]">
+                                Record Crafting
+                              </button>
+                            )}
+                            <button type="button" onClick={handleMarkOwned}
+                              className="rounded border border-white/15 bg-[#171C24] px-2.5 py-1 text-[11px] font-medium text-[#ECEFF4] hover:border-[#D4A853] hover:text-[#D4A853]">
+                              Mark Owned
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
             </div>
 
-            {crafting.consolidatedMaterials.length === 0 ? (
-              <p className="text-xs text-emerald-400">
-                All equipped weapons, armor, and decorations in this loadout are already crafted in your inventory.
-              </p>
-            ) : (
-              <div className="overflow-x-auto border-t border-white/[0.07] pt-3">
-                <table className="w-full text-left text-xs">
-                  <thead className="text-[#667085]">
-                    <tr>
-                      <th className="py-1.5 font-medium">Material</th>
-                      <th className="py-1.5 font-medium">Hunt Source</th>
-                      <th className="py-1.5 text-right font-medium">Need</th>
-                      <th className="py-1.5 text-right font-medium">Box Qty</th>
-                      <th className="py-1.5 text-right font-medium">Missing</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/[0.05]">
-                    {crafting.consolidatedMaterials.map((mat) => (
-                      <tr key={mat.name}>
-                        <td className="py-2 font-medium text-[#ECEFF4]">{mat.name}</td>
-                        <td className="py-2 text-[#98A2B3]">{mat.source}</td>
-                        <td className="py-2 text-right font-mono-tabular text-[#ECEFF4]">
-                          {mat.required}
-                        </td>
-                        <td className="py-2 text-right font-mono-tabular">
-                          <div className="inline-flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                onUpdateInventory({
-                                  ...inventory,
-                                  materials: {
-                                    ...inventory.materials,
-                                    [mat.name]: Math.max(0, mat.owned - 1),
-                                  },
-                                })
-                              }
-                              className="rounded border border-white/10 bg-[#0B0D10] px-1.5 py-0.5 text-[11px] text-[#98A2B3] hover:text-[#ECEFF4]"
-                              aria-label={`Decrease ${mat.name}`}
-                            >
-                              -
-                            </button>
-                            <span className="w-6 text-center text-[#ECEFF4]">
-                              {mat.owned}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                onUpdateInventory({
-                                  ...inventory,
-                                  materials: {
-                                    ...inventory.materials,
-                                    [mat.name]: mat.owned + 1,
-                                  },
-                                })
-                              }
-                              className="rounded border border-white/10 bg-[#0B0D10] px-1.5 py-0.5 text-[11px] text-[#98A2B3] hover:text-[#ECEFF4]"
-                              aria-label={`Increase ${mat.name}`}
-                            >
-                              +
-                            </button>
-                          </div>
-                        </td>
-                        <td
-                          className={`py-2 text-right font-mono-tabular font-semibold ${
-                            mat.shortfall > 0 ? 'text-amber-400' : 'text-emerald-400'
-                          }`}
-                        >
-                          {mat.shortfall > 0 ? `-${mat.shortfall}` : 'Ready'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            {crafting.pieceBreakdowns.length === 0 && (
+              <p className="text-xs text-emerald-400">All equipped weapons, armor, and decoration copies are marked as owned.</p>
             )}
           </div>
         </div>
@@ -1114,7 +1219,7 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
               Combat Telemetry
             </h2>
             <p className="mt-0.5 text-xs text-[#98A2B3]">
-              Sunbreak effective output including Powercharm/Talon & Dango Booster
+              Enraged weak-spot scenario · pouch charms, talons &amp; Dango Booster included
             </p>
 
             <div className="mt-4 grid grid-cols-2 gap-3">
@@ -1133,6 +1238,37 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
             </div>
 
             <dl className="mt-4 divide-y divide-white/[0.07] text-xs">
+              {fullBurst && (
+                <div className="flex items-center justify-between gap-3 py-2">
+                  <dt className="text-[#98A2B3]">Full Burst (fixed damage)</dt>
+                  <dd className="text-right font-mono-tabular font-medium text-[#ECEFF4]">
+                    {fullBurst.fixedDamage} <span className="text-[#98A2B3]">· {fullBurst.shellCount} shells</span>
+                  </dd>
+                </div>
+              )}
+              {primaryAmmo && (
+                <div className="flex items-center justify-between gap-3 py-2">
+                  <dt className="text-[#98A2B3]"><label htmlFor="builder-bowgun-ammo">Primary ammo</label></dt>
+                  <dd>
+                    <select id="builder-bowgun-ammo"
+                      value={ammoOptions.some(ammo => ammo.id === loadout.bowgunAmmo) ? loadout.bowgunAmmo : ''}
+                      onChange={event => onUpdateLoadout({
+                        ...loadout,
+                        bowgunAmmo: ammoOptions.find(ammo => ammo.id === event.target.value)?.id,
+                      })}
+                      className="rounded border border-white/15 bg-[#0B0D10] px-2 py-1 text-xs text-[#ECEFF4]">
+                      <option value="">Auto · {ammoOptions[0].label}</option>
+                      {ammoOptions.map(ammo => <option key={ammo.id} value={ammo.id}>{ammo.label}</option>)}
+                    </select>
+                  </dd>
+                </div>
+              )}
+              {ammoHandling && (
+                <div className="flex items-center justify-between gap-3 py-2">
+                  <dt className="text-[#98A2B3]">Ammo handling (skills only)</dt>
+                  <dd className="text-right text-[#ECEFF4]">{ammoHandling.recoil} recoil · {ammoHandling.reload} reload</dd>
+                </div>
+              )}
               <div className="flex items-center justify-between py-2">
                 <dt className="text-[#98A2B3]">True Raw Attack</dt>
                 <dd className="font-mono-tabular font-medium text-[#ECEFF4]">

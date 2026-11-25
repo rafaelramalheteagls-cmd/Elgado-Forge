@@ -37,7 +37,7 @@ export type SharpnessTier =
 
 export type ArmorSlot = 'Helm' | 'Chest' | 'Arms' | 'Waist' | 'Legs';
 
-export type RankTier = 'HR' | 'Early MR' | 'Story MR' | 'MR 10+' | 'Endgame AR';
+export type RankTier = 'LR' | 'HR' | 'MR' | 'Early MR' | 'Story MR' | 'MR 10+' | 'Endgame AR';
 
 export type SkillCategory =
   | 'Attack'
@@ -60,6 +60,9 @@ export interface SkillDefinition {
   category: SkillCategory;
   summary: string;
   levelDescriptions: string[];
+  sourceId?: number;
+  sourceKind?: 'Skill' | 'MrSkill';
+  isLegacy?: boolean;
 }
 
 export interface WeaponItem {
@@ -82,6 +85,14 @@ export interface WeaponItem {
   rampageSlot: number;
   damageType: DamageType;
   unlockNote: string;
+  sourceId?: number;
+  sourceSharpnessGauge?: number[];
+  sourceSlots?: number[];
+  sourceRampageSlots?: number[];
+  sourceProgression?: { village?: unknown; hall?: unknown; masterRank?: unknown; craftingProgressFlags?: number[] };
+  sourceCrafting?: unknown[];
+  sourceDetails?: unknown;
+  isLegacy?: boolean;
 }
 
 export interface ArmorItem {
@@ -103,6 +114,15 @@ export interface ArmorItem {
   slots: [number, number, number];
   skills: Record<string, number>;
   unlockNote: string;
+  sourceId?: number;
+  sourceSeriesId?: number;
+  sourceSeriesName?: string;
+  variantLabel?: string;
+  sourceRankGroup?: string;
+  sourceSlots?: number[];
+  nameResolved?: boolean;
+  isSelectable?: boolean;
+  isLegacy?: boolean;
 }
 
 export interface DecorationItem {
@@ -114,6 +134,11 @@ export interface DecorationItem {
   points: number;
   rankTier: RankTier;
   minMr: number;
+  sourceId?: number;
+  sourceSkills?: Array<{ skillId: string; skillName: string; level: number }>;
+  skillName?: string;
+  rampageWeaponClasses?: WeaponClass[];
+  isLegacy?: boolean;
 }
 
 export interface TalismanItem {
@@ -139,14 +164,18 @@ export interface QuriousArmorAugment {
   defenseDelta: number;
   skillAddedId: string;
   skillAddedPoints: number;
+  skillRemovedId?: string;
   slotUpgrade: number; // 0..2
 }
+
+export type BowgunAmmoId = `${'Normal' | 'Kantsu' | 'SanW'}${1 | 2 | 3}`;
 
 export interface BuildLoadout {
   id: string;
   name: string;
   weaponClass: WeaponClass;
   weaponId: string;
+  bowgunAmmo?: BowgunAmmoId;
   helmId: string;
   chestId: string;
   armsId: string;
@@ -201,6 +230,10 @@ export interface ComboHit {
   sharpnessCost: number;
   statusProcChance: number; // 0.33 default for melee
   isAerialOrWirebug?: boolean;
+  damageType?: DamageType;
+  rangedAttack?: 'bow-shot' | 'bowgun-magazine';
+  gunlanceFullBurst?: boolean;
+  chargeBladeSaedPhials?: boolean;
 }
 
 export interface WeaponCombo {
@@ -208,16 +241,20 @@ export interface WeaponCombo {
   weaponClass: WeaponClass;
   name: string;
   description: string;
-  durationSec: number;
+  durationSec?: number;
   hits: ComboHit[];
 }
 
 export interface SimulationConfig {
+  pierceTicksPerProjectile?: number;
+  offensiveGuardUptime?: number;
+  dragonConversionCharged?: boolean;
   monsterId: string;
   partName: string;
   monsterState: MonsterState;
   comboId: string;
   wexUptime: number; // 0..100
+  elementExploitActive?: boolean;
   agitatorUptime: number; // 0..100
   bloodlustCleared: boolean;
   derelictionQurio: 1 | 2 | 3;
@@ -225,6 +262,7 @@ export interface SimulationConfig {
   burstActive: boolean;
   coalescenceActive: boolean;
   powercharmTalon: boolean;
+  armorcharmTalon?: boolean;
   dangoBooster: boolean;
 }
 
@@ -234,6 +272,7 @@ export interface CalculatedBuildStats {
   trueElement: number;
   effectiveElement: number;
   totalAffinity: number;
+  weakspotAffinity: number;
   critMultiplier: number;
   sharpness: SharpnessTier;
   sharpnessRawMod: number;
@@ -257,14 +296,20 @@ export interface SimulationHitResult {
   elementDamage: number;
   totalAverageDamage: number;
   critDamage: number;
+  shellCount?: number;
+  shellingUnavailable?: boolean;
+  attackUnavailable?: boolean;
+  nonCritical?: boolean;
 }
 
 export interface SimulationResult {
   comboDamage: number;
-  dps: number;
+  dps?: number;
+  cycleSeconds?: number;
+  isBowgunMagazine: boolean;
   rawSharePercent: number;
   elementSharePercent: number;
-  estimatedClearSeconds: number;
+  estimatedClearSeconds?: number;
   hits: SimulationHitResult[];
   timeline: Array<{ second: number; cumulativeDamage: number }>;
 }
@@ -278,6 +323,7 @@ export interface HunterProfile {
   hr: number;
   mr: number;
   ar: number;
+  steamEstimatedRanks?: { hr: number; mr: number; ar: number };
   achievementsUnlocked: number;
   achievementsTotal: number;
   unlockedMilestones: string[];

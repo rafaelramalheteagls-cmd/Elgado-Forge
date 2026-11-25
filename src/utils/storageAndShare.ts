@@ -2,16 +2,22 @@ import {
   ARMOR_DB,
   DECORATIONS_DB,
   DEFAULT_TALISMAN,
+  getArmorById,
+  getDecorationById,
+  getWeaponById,
   MATERIALS_CATALOG,
   SKILLS_DB,
   STARTER_LOADOUT,
   WEAPONS_DB,
 } from '../data/sunbreakDb';
-import { getUnlockedIdsForRank } from '../engine/damageCalculator';
+import { DECORATION_NAMES_BY_GAME_ID } from '../data/mhriceDecorationIds';
+import catalog from '../data/generated/mhriceAppCatalog.json';
+import { EMPTY_ARMOR_AUGMENT, EMPTY_Q_ARMOR, EMPTY_Q_WEAPON } from '../data/quriousDefaults';
 import {
   BuildLoadout,
   HunterProfile,
   InventoryState,
+  SteamSyncResponse,
   TalismanItem,
 } from '../types/sunbreak';
 
@@ -38,31 +44,25 @@ export const DEFAULT_HUNTER_PROFILE: HunterProfile = {
   lastSyncedAt: null,
 };
 
-export function createDefaultInventory(mr = 10, ar = 50): InventoryState {
-  const unlocked = getUnlockedIdsForRank(mr, ar);
+export function createDefaultInventory(): InventoryState {
   return {
-    ownedWeaponIds: unlocked.weaponIds,
-    ownedArmorIds: unlocked.armorIds,
-    ownedDecoIds: unlocked.decoIds,
+    ownedWeaponIds: [],
+    ownedArmorIds: [],
+    ownedDecoIds: [],
     ownedDecoCounts: {},
     talismans: [],
-    materials: {
-      'Afflicted Bone': 14,
-      'Afflicted Blood': 9,
-      'Afflicted Direhorn': 4,
-      'Afflicted Cortex': 3,
-      'Pure Dragon Blood': 6,
-      'Eltalite Ore': 18,
-      'Sovereign Jewel': 4,
-      'Adamantine Jewel': 10,
-      'Lazurite Jewel': 12,
-      'Bloodrun Jewel': 5,
-      'Risen Dragonbone': 2,
-      'Silver-rimmed Shard': 2,
-    },
+    materials: {},
     autoSyncEnabled: false,
     lastInventorySyncAt: null,
   };
+}
+
+function withQuriousDefaults(build: BuildLoadout): BuildLoadout {
+  const quriousArmor = { ...EMPTY_Q_ARMOR };
+  for (const slot of Object.keys(quriousArmor) as Array<keyof typeof quriousArmor>) {
+    quriousArmor[slot] = { ...EMPTY_ARMOR_AUGMENT, ...build.quriousArmor?.[slot] };
+  }
+  return { ...build, quriousWeapon: { ...EMPTY_Q_WEAPON, ...build.quriousWeapon }, quriousArmor };
 }
 
 export function loadSavedBuilds(): BuildLoadout[] {
@@ -70,7 +70,7 @@ export function loadSavedBuilds(): BuildLoadout[] {
     const raw = localStorage.getItem(STORAGE_KEYS.SAVED_BUILDS);
     if (!raw) return [STARTER_LOADOUT];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : [STARTER_LOADOUT];
+    return Array.isArray(parsed) ? parsed.filter(build => build?.weaponId).map(withQuriousDefaults) : [STARTER_LOADOUT];
   } catch {
     return [STARTER_LOADOUT];
   }
@@ -100,7 +100,7 @@ export function loadActiveBuild(): BuildLoadout {
     const raw = localStorage.getItem(STORAGE_KEYS.ACTIVE_BUILD);
     if (!raw) return STARTER_LOADOUT;
     const parsed = JSON.parse(raw);
-    return parsed?.weaponId ? parsed : STARTER_LOADOUT;
+    return parsed?.weaponId ? withQuriousDefaults(parsed) : STARTER_LOADOUT;
   } catch {
     return STARTER_LOADOUT;
   }
@@ -124,6 +124,22 @@ export function saveHunterProfile(profile: HunterProfile): void {
   localStorage.setItem(STORAGE_KEYS.HUNTER_PROFILE, JSON.stringify(profile));
 }
 
+export function mergeSteamProfile(profile: HunterProfile, steam: SteamSyncResponse, syncedAt: string): HunterProfile {
+  return {
+    ...profile,
+    hunterName: steam.personaName || profile.hunterName,
+    steamId64: steam.steamId64,
+    steamPersona: steam.personaName,
+    steamAvatarUrl: steam.avatarUrl,
+    playtimeHours: steam.playtimeHours,
+    achievementsUnlocked: steam.achievementsUnlocked,
+    achievementsTotal: steam.achievementsTotal,
+    unlockedMilestones: steam.milestones,
+    steamEstimatedRanks: { hr: steam.estimatedHr, mr: steam.estimatedMr, ar: steam.estimatedAr },
+    lastSyncedAt: syncedAt,
+  };
+}
+
 const LEGACY_PRESET_TALISMAN_IDS = new Set([
   'tali_default_wex2',
   'tali_ab3_ce2',
@@ -135,9 +151,9 @@ const LEGACY_PRESET_TALISMAN_IDS = new Set([
 export function loadInventoryState(): InventoryState {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.INVENTORY);
-    if (!raw) return createDefaultInventory(10, 50);
+    if (!raw) return createDefaultInventory();
     const parsed = JSON.parse(raw) as Partial<InventoryState>;
-    const merged = { ...createDefaultInventory(10, 50), ...parsed };
+    const merged = { ...createDefaultInventory(), ...parsed };
     merged.talismans = Array.isArray(merged.talismans)
       ? merged.talismans.filter(
           (t) =>
@@ -149,7 +165,7 @@ export function loadInventoryState(): InventoryState {
       : [];
     return merged;
   } catch {
-    return createDefaultInventory(10, 50);
+    return createDefaultInventory();
   }
 }
 
@@ -186,18 +202,95 @@ export function decodeBuildFromHash(hashStr: string): BuildLoadout | null {
       bytes[i] = binary.charCodeAt(i);
     }
     const json = new TextDecoder().decode(bytes);
-    const parsed = JSON.parse(json) as BuildLoadout;
-    if (!parsed || !parsed.weaponId || !parsed.helmId || !parsed.decorations) {
-      return null;
-    }
-    return {
-      ...STARTER_LOADOUT,
-      ...parsed,
-      talisman: parsed.talisman ?? DEFAULT_TALISMAN,
-    };
+    return normalizeSharedBuild(JSON.parse(json));
   } catch {
     return null;
   }
+}
+
+function normalizeSharedBuild(parsed: BuildLoadout): BuildLoadout | null {
+  if (!parsed || typeof parsed.weaponId !== 'string' || typeof parsed.helmId !== 'string' ||
+      !parsed.decorations || typeof parsed.decorations !== 'object' || Array.isArray(parsed.decorations)) return null;
+  const weapon = getWeaponById(parsed.weaponId);
+  if (!weapon) return null;
+  const decorations = { ...parsed.decorations };
+  for (const key of Object.keys(STARTER_LOADOUT.decorations) as Array<keyof typeof decorations>) {
+    const group = decorations[key];
+    if (group === undefined) decorations[key] = [];
+    else if (!Array.isArray(group) || group.some((id) => typeof id !== 'string')) return null;
+  }
+  const talisman = parsed.talisman ?? DEFAULT_TALISMAN;
+  if (!Array.isArray(talisman.slots) || talisman.slots.length !== 3 ||
+      talisman.slots.some((slot) => !Number.isInteger(slot) || slot < 0 || slot > 4)) return null;
+  if (parsed.quriousWeapon === null || parsed.quriousArmor === null) return null;
+  return withQuriousDefaults({
+    ...STARTER_LOADOUT, ...parsed, weaponClass: weapon.weaponClass, decorations, talisman,
+    quriousWeapon: parsed.quriousWeapon, quriousArmor: parsed.quriousArmor,
+  });
+}
+
+function restoreBackupBuild(build: BuildLoadout): BuildLoadout | null {
+  if (typeof build?.id !== 'string' || !build.id.trim() || typeof build.name !== 'string') return null;
+  const optionalRecord = (value: unknown) => value === undefined
+    || (value !== null && typeof value === 'object' && !Array.isArray(value));
+  if (!optionalRecord(build.quriousWeapon) || !optionalRecord(build.quriousArmor)) return null;
+  const normalized = normalizeSharedBuild(build);
+  if (!normalized) return null;
+  const armorSlots = ['Helm', 'Chest', 'Arms', 'Waist', 'Legs'] as const;
+  for (const slot of armorSlots) {
+    if (!optionalRecord(build.quriousArmor?.[slot])) return null;
+    const key = `${slot.toLowerCase()}Id` as 'helmId' | 'chestId' | 'armsId' | 'waistId' | 'legsId';
+    const id = normalized[key];
+    if (typeof id !== 'string' || (id && getArmorById(id)?.slot !== slot)) return null;
+    const augment = normalized.quriousArmor[slot];
+    if (!Number.isSafeInteger(augment.defenseDelta) || !Number.isSafeInteger(augment.skillAddedPoints)
+      || !Number.isSafeInteger(augment.slotUpgrade) || typeof augment.skillAddedId !== 'string'
+      || (augment.skillRemovedId !== undefined && typeof augment.skillRemovedId !== 'string')) return null;
+  }
+  const weaponAugment = normalized.quriousWeapon;
+  if (![weaponAugment.attackLevel, weaponAugment.elementLevel, weaponAugment.affinityLevel, weaponAugment.extraSlotLevel]
+    .every(Number.isSafeInteger) || typeof weaponAugment.sharpnessBoost !== 'boolean') return null;
+  const charm = normalized.talisman;
+  if (typeof charm.id !== 'string' || typeof charm.name !== 'string'
+    || typeof charm.skill1Id !== 'string' || typeof charm.skill2Id !== 'string'
+    || !Number.isSafeInteger(charm.skill1Level) || !Number.isSafeInteger(charm.skill2Level)
+    || typeof normalized.updatedAt !== 'string' || typeof normalized.rampageDecoId !== 'string'
+    || (normalized.scrollMode !== 'Red' && normalized.scrollMode !== 'Blue')
+    || (normalized.bowgunAmmo !== undefined && (typeof normalized.bowgunAmmo !== 'string'
+      || !/^(Normal|Kantsu|SanW)[1-3]$/.test(normalized.bowgunAmmo)))) return null;
+  return normalized;
+}
+
+export function parseBuildsBackup(raw: string): { builds: BuildLoadout[]; invalidRows: number[] } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.trim());
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const builds: BuildLoadout[] = [];
+  const invalidRows: number[] = [];
+  for (const [index, row] of parsed.entries()) {
+    const build = restoreBackupBuild(row);
+    if (build) builds.push(build);
+    else invalidRows.push(index + 1);
+  }
+  return { builds, invalidRows };
+}
+
+export function partitionBuildsBackup(builds: BuildLoadout[], savedBuilds: BuildLoadout[]) {
+  const existingIds = new Set(savedBuilds.map(build => build.id));
+  const added: BuildLoadout[] = [];
+  const duplicates: BuildLoadout[] = [];
+  for (const build of builds) {
+    if (existingIds.has(build.id)) duplicates.push(build);
+    else {
+      added.push(build);
+      existingIds.add(build.id);
+    }
+  }
+  return { added, duplicates };
 }
 
 function normalizeKey(raw: string): string {
@@ -322,6 +415,7 @@ function indexEquipAliases(map: Map<string, string>, rawName: string, id: string
 
 const KINSECT_KEYS = new Set(
   [
+    ...catalog.kinsectNames,
     'Culldrone',
     'Mauldrone',
     'Windchopper',
@@ -349,8 +443,11 @@ const KINSECT_KEYS = new Set(
 );
 
 const WEAPON_LOOKUP = new Map<string, string>();
+const WEAPON_EXACT_NAMES = new Map<string, string | null>();
 const WEAPON_BASE_LOOKUP = new Map<string, string>();
 WEAPONS_DB.forEach((w) => {
+  const exactName = w.name.trim().toLowerCase();
+  WEAPON_EXACT_NAMES.set(exactName, WEAPON_EXACT_NAMES.has(exactName) ? null : w.id);
   WEAPON_LOOKUP.set(normalizeKey(w.id), w.id);
   WEAPON_LOOKUP.set(normalizeKey(w.name), w.id);
   indexEquipAliases(WEAPON_LOOKUP, w.name, w.id);
@@ -363,8 +460,16 @@ WEAPONS_DB.forEach((w) => {
 });
 
 const ARMOR_LOOKUP = new Map<string, string>();
+const ARMOR_EXACT_NAMES = new Map<string, string | null>();
 const ARMOR_BASE_LOOKUP = new Map<string, string>();
+const ARMOR_SOURCE_IDS = new Map<string, string>();
+const ARMOR_SOURCE_SLOTS = { Helm: 'head', Chest: 'chest', Arms: 'arm', Waist: 'waist', Legs: 'leg' } as const;
 ARMOR_DB.forEach((a) => {
+  if (a.sourceId !== undefined) {
+    ARMOR_SOURCE_IDS.set(`armor:${ARMOR_SOURCE_SLOTS[a.slot]}:${a.sourceId}`, a.id);
+  }
+  const exactName = a.name.trim().toLowerCase();
+  ARMOR_EXACT_NAMES.set(exactName, ARMOR_EXACT_NAMES.has(exactName) ? null : a.id);
   ARMOR_LOOKUP.set(normalizeKey(a.id), a.id);
   ARMOR_LOOKUP.set(normalizeKey(a.name), a.id);
   indexEquipAliases(ARMOR_LOOKUP, a.name, a.id);
@@ -372,6 +477,8 @@ ARMOR_DB.forEach((a) => {
 });
 
 function resolveWeaponNameOrId(raw: string): string | undefined {
+  const exactName = raw.trim().toLowerCase();
+  if (WEAPON_EXACT_NAMES.has(exactName)) return WEAPON_EXACT_NAMES.get(exactName) ?? undefined;
   const candidates = [raw, raw.replace(/['’]s\b/gi, '')];
   for (const c of candidates) {
     const k = normalizeKey(c);
@@ -391,6 +498,8 @@ function resolveWeaponNameOrId(raw: string): string | undefined {
 }
 
 function resolveArmorNameOrId(raw: string): string | undefined {
+  const exactName = raw.trim().toLowerCase();
+  if (ARMOR_EXACT_NAMES.has(exactName)) return ARMOR_EXACT_NAMES.get(exactName) ?? undefined;
   const candidates = [raw, raw.replace(/['’]s\b/gi, '')];
   for (const c of candidates) {
     const k = normalizeKey(c);
@@ -428,6 +537,10 @@ DECORATIONS_DB.forEach((d) => {
     }
   });
 });
+for (const decoration of [...catalog.decorations, ...catalog.rampageDecorations]) {
+  const id = DECO_LOOKUP.get(normalizeKey(decoration.name));
+  if (id) DECO_LOOKUP.set(normalizeKey(decoration.id), id);
+}
 
 function resolveDecoNameOrId(raw: string): string | undefined {
   const trimmed = raw.trim();
@@ -439,8 +552,11 @@ function resolveDecoNameOrId(raw: string): string | undefined {
 }
 
 const MATERIAL_LOOKUP = new Map<string, string>();
+function materialLookupKey(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9+]/g, '');
+}
 MATERIALS_CATALOG.forEach((m) => {
-  MATERIAL_LOOKUP.set(normalizeKey(m.name), m.name);
+  MATERIAL_LOOKUP.set(materialLookupKey(m.name), m.name);
 });
 
 function matchSkillId(rawName: string): string {
@@ -477,6 +593,10 @@ export interface ParsedSyncPayload {
   hasWeaponsField: boolean;
   hasArmorField: boolean;
   hasDecosField: boolean;
+  decorationCountsComplete: boolean;
+  decorationImportIssues: string[];
+  weaponImportIssues: string[];
+  armorImportIssues: string[];
   hasTalismansField: boolean;
   profilePatch?: {
     hunterName?: string;
@@ -500,6 +620,31 @@ export interface ParsedSyncPayload {
   };
 }
 
+export function mergeImportedDecorations(inventory: InventoryState, parsed: ParsedSyncPayload, replaceBox: boolean) {
+  if (replaceBox && parsed.decorationCountsComplete) {
+    return { ownedDecoIds: parsed.ownedDecoIds, ownedDecoCounts: parsed.ownedDecoCounts };
+  }
+  const ownedDecoCounts = { ...inventory.ownedDecoCounts };
+  for (const [id, quantity] of Object.entries(parsed.ownedDecoCounts)) {
+    ownedDecoCounts[id] = Math.max(ownedDecoCounts[id] ?? 0, quantity);
+  }
+  return {
+    ownedDecoIds: [...new Set([...inventory.ownedDecoIds, ...parsed.ownedDecoIds])],
+    ownedDecoCounts,
+  };
+}
+
+export function mergeImportedEquipment(inventory: InventoryState, parsed: ParsedSyncPayload, replaceBox: boolean) {
+  return {
+    ownedWeaponIds: replaceBox && parsed.hasWeaponsField && !parsed.weaponImportIssues.length
+      ? parsed.ownedWeaponIds
+      : [...new Set([...inventory.ownedWeaponIds, ...parsed.ownedWeaponIds])],
+    ownedArmorIds: replaceBox && parsed.hasArmorField && !parsed.armorImportIssues.length
+      ? parsed.ownedArmorIds
+      : [...new Set([...inventory.ownedArmorIds, ...parsed.ownedArmorIds])],
+  };
+}
+
 export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload {
   const emptyResult: ParsedSyncPayload = {
     isReFrameworkSnapshot: false,
@@ -507,6 +652,10 @@ export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload
     hasWeaponsField: false,
     hasArmorField: false,
     hasDecosField: false,
+    decorationCountsComplete: false,
+    decorationImportIssues: [],
+    weaponImportIssues: [],
+    armorImportIssues: [],
     hasTalismansField: false,
     talismans: [],
     ownedWeaponIds: [],
@@ -616,7 +765,7 @@ export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload
         const qty = Math.max(0, Math.min(9999, Math.floor(Number(rawVal) || 0)));
         if (!cleanName || qty <= 0) continue;
 
-        const canonical = MATERIAL_LOOKUP.get(normalizeKey(cleanName));
+        const canonical = MATERIAL_LOOKUP.get(materialLookupKey(cleanName));
         if (canonical) {
           materials[canonical] = (materials[canonical] ?? 0) + qty;
           matchedCatalogMaterials++;
@@ -627,47 +776,95 @@ export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload
     }
 
     // Resolve Weapons
-    const weaponIdsSet = new Set<string>(
-      Array.isArray(parsed.ownedWeaponIds) ? parsed.ownedWeaponIds.filter(Boolean) : []
-    );
+    const weaponIdsSet = new Set<string>();
+    const weaponImportIssues: string[] = [];
+    if (Array.isArray(parsed.ownedWeaponIds)) {
+      for (const [index, value] of parsed.ownedWeaponIds.entries()) {
+        const id = typeof value === 'string' ? value.trim() : '';
+        const resolved = id && (resolveWeaponNameOrId(id) ?? getWeaponById(id)?.id);
+        if (resolved) weaponIdsSet.add(resolved);
+        else weaponImportIssues.push(id || `ownedWeaponIds #${index + 1}`);
+      }
+    }
     if (!Array.isArray(parsed) && Array.isArray(parsed.weapons)) {
-      for (const rawW of parsed.weapons) {
+      for (const [index, rawW] of parsed.weapons.entries()) {
         const candidate =
           rawW && typeof rawW === 'object'
             ? String((rawW as Record<string, unknown>).name ?? (rawW as Record<string, unknown>).id ?? '')
             : String(rawW ?? '');
         const name = candidate.trim();
-        if (!name) continue;
+        if (!name) {
+          weaponImportIssues.push(`weapons #${index + 1}`);
+          continue;
+        }
         if (KINSECT_KEYS.has(normalizeKey(name))) continue;
         const resolved = resolveWeaponNameOrId(name);
         if (resolved) weaponIdsSet.add(resolved);
-        else unmatchedItems.push(name);
+        else weaponImportIssues.push(name);
       }
     }
 
     // Resolve Armor
-    const armorIdsSet = new Set<string>(
-      Array.isArray(parsed.ownedArmorIds) ? parsed.ownedArmorIds.filter(Boolean) : []
-    );
-    if (!Array.isArray(parsed) && Array.isArray(parsed.armor)) {
-      for (const rawA of parsed.armor) {
-        const candidate =
-          rawA && typeof rawA === 'object'
-            ? String((rawA as Record<string, unknown>).name ?? (rawA as Record<string, unknown>).id ?? '')
-            : String(rawA ?? '');
-        const name = candidate.trim();
-        if (!name) continue;
-        const resolved = resolveArmorNameOrId(name);
+    const armorIdsSet = new Set<string>();
+    const armorImportIssues: string[] = [];
+    if (Array.isArray(parsed.ownedArmorIds)) {
+      for (const [index, value] of parsed.ownedArmorIds.entries()) {
+        const id = typeof value === 'string' ? value.trim() : '';
+        const resolved = id && (resolveArmorNameOrId(id) ?? getArmorById(id)?.id);
         if (resolved) armorIdsSet.add(resolved);
-        else unmatchedItems.push(name);
+        else armorImportIssues.push(id || `ownedArmorIds #${index + 1}`);
       }
     }
+    if (!Array.isArray(parsed) && Array.isArray(parsed.armor)) {
+      for (const [index, rawA] of parsed.armor.entries()) {
+        const entry = rawA && typeof rawA === 'object' ? rawA as Record<string, unknown> : undefined;
+        const id = String(entry?.id ?? '').trim();
+        const name = String(entry ? entry.name ?? '' : rawA ?? '').trim();
+        if (!name && !id) {
+          armorImportIssues.push(`armor #${index + 1}`);
+          continue;
+        }
+        const resolved = ARMOR_SOURCE_IDS.get(id || name)
+          ?? (id ? ARMOR_LOOKUP.get(normalizeKey(id)) : undefined)
+          ?? (name ? resolveArmorNameOrId(name) : undefined);
+        if (resolved) armorIdsSet.add(resolved);
+        else armorImportIssues.push(name || id);
+      }
+    }
+    if (!Array.isArray(parsed)) {
+      for (const field of ['weapons', 'ownedWeaponIds']) {
+        if (field in parsed && !Array.isArray(parsed[field])) weaponImportIssues.push(field);
+      }
+      for (const field of ['armor', 'ownedArmorIds']) {
+        if (field in parsed && !Array.isArray(parsed[field])) armorImportIssues.push(field);
+      }
+    }
+    unmatchedItems.push(...weaponImportIssues, ...armorImportIssues);
 
     // Resolve Decorations
-    const decoIdsSet = new Set<string>(
-      Array.isArray(parsed.ownedDecoIds) ? parsed.ownedDecoIds.filter(Boolean) : []
-    );
+    const decoIdsSet = new Set<string>();
+    const decorationImportIssues: string[] = [];
+    const invalidDecoration = (label: string) => {
+      decorationImportIssues.push(label);
+      unmatchedItems.push(label);
+    };
+    const resolveImportedDeco = (id: string) => {
+      const legacy = getDecorationById(id);
+      return resolveDecoNameOrId(id) ?? (legacy && (resolveDecoNameOrId(legacy.name) ?? legacy.id));
+    };
+    if (Array.isArray(parsed.ownedDecoIds)) {
+      for (const [index, id] of parsed.ownedDecoIds.entries()) {
+        if (typeof id !== 'string' || !id.trim()) {
+          invalidDecoration(`ownedDecoIds #${index + 1}`);
+          continue;
+        }
+        const resolved = resolveImportedDeco(id);
+        if (resolved) decoIdsSet.add(resolved);
+        else invalidDecoration(id);
+      }
+    }
     const ownedDecoCounts: Record<string, number> = {};
+    const listedDecoCounts: Record<string, number> = {};
     if (
       !Array.isArray(parsed) &&
       parsed.ownedDecoCounts &&
@@ -675,38 +872,84 @@ export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload
       !Array.isArray(parsed.ownedDecoCounts)
     ) {
       for (const [id, rawQty] of Object.entries(parsed.ownedDecoCounts as Record<string, unknown>)) {
-        const qty = Math.max(0, Math.floor(Number(rawQty) || 0));
-        if (id && qty > 0) {
-          ownedDecoCounts[id] = qty;
-          decoIdsSet.add(id);
+        const qty = typeof rawQty === 'number' || (typeof rawQty === 'string' && rawQty.trim()) ? Number(rawQty) : NaN;
+        if (!Number.isSafeInteger(qty) || qty < 0) {
+          invalidDecoration(`${id} (invalid quantity)`);
+          continue;
         }
+        const resolved = resolveImportedDeco(id);
+        if (!resolved) {
+          invalidDecoration(id);
+          continue;
+        }
+        if (qty === 0) continue;
+        ownedDecoCounts[resolved] = Math.max(ownedDecoCounts[resolved] ?? 0, qty);
+        decoIdsSet.add(resolved);
       }
     }
     if (!Array.isArray(parsed) && Array.isArray(parsed.decorations)) {
-      for (const rawD of parsed.decorations) {
+      for (const [index, rawD] of parsed.decorations.entries()) {
+        const rowLabel = `decorations #${index + 1}`;
         if (typeof rawD === 'string') {
           const resolved = resolveDecoNameOrId(rawD);
           if (resolved) {
             decoIdsSet.add(resolved);
-            ownedDecoCounts[resolved] = (ownedDecoCounts[resolved] ?? 0) + 1;
-          } else if (rawD.trim()) {
-            unmatchedItems.push(rawD.trim());
-          }
+            listedDecoCounts[resolved] = (listedDecoCounts[resolved] ?? 0) + 1;
+          } else invalidDecoration(rawD.trim() || rowLabel);
         } else if (rawD && typeof rawD === 'object') {
           const rec = rawD as Record<string, unknown>;
-          const qty = Math.max(0, Math.floor(Number(rec.quantity ?? rec.count ?? rec.num ?? 1) || 0));
+          const quantityField = ['quantity', 'count', 'num'].find(field => Object.hasOwn(rec, field));
+          const value = quantityField ? rec[quantityField] : 1;
+          const qty = typeof value === 'number' || (typeof value === 'string' && value.trim()) ? Number(value) : NaN;
           const name = String(rec.name ?? rec.id ?? '').trim();
-          if (qty > 0 && qty <= 999 && name) {
-            const resolved = resolveDecoNameOrId(name);
-            if (resolved) {
-              decoIdsSet.add(resolved);
-              ownedDecoCounts[resolved] = (ownedDecoCounts[resolved] ?? 0) + qty;
-            } else if (/jewel|soul/i.test(name)) {
-              unmatchedItems.push(name);
-            }
+          const gameName = typeof rec.id === 'number' ? DECORATION_NAMES_BY_GAME_ID.get(rec.id) : undefined;
+          const resolved = resolveImportedDeco(name) ?? (gameName && resolveImportedDeco(gameName));
+          if (!Number.isSafeInteger(qty) || qty < 0 || qty > 999) {
+            invalidDecoration(`${name || rowLabel} (invalid quantity)`);
+          } else if (!resolved) {
+            invalidDecoration(name || rowLabel);
+          } else if (qty > 0) {
+            decoIdsSet.add(resolved);
+            listedDecoCounts[resolved] = (listedDecoCounts[resolved] ?? 0) + qty;
           }
-        }
+        } else invalidDecoration(rowLabel);
       }
+    }
+    // The map and the list can describe the same inventory copies.
+    for (const [id, quantity] of Object.entries(listedDecoCounts)) {
+      ownedDecoCounts[id] = Math.max(ownedDecoCounts[id] ?? 0, quantity);
+    }
+
+    if (isRefSnapshot && Array.isArray(parsed.equippedDecorationIdCounts)) {
+      for (const [index, row] of parsed.equippedDecorationIdCounts.entries()) {
+        const label = `equippedDecorationIdCounts #${index + 1}`;
+        if (!row || typeof row !== 'object') {
+          invalidDecoration(label);
+          continue;
+        }
+        const { id, quantity } = row as Record<string, unknown>;
+        if (typeof id !== 'number' || typeof quantity !== 'number'
+          || !Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
+          invalidDecoration(label);
+          continue;
+        }
+        const name = DECORATION_NAMES_BY_GAME_ID.get(id);
+        const decoration = name && DECORATIONS_DB.find((item) => item.name === name);
+        if (!decoration) {
+          invalidDecoration(`Equipped decoration ID ${id}`);
+          continue;
+        }
+        decoIdsSet.add(decoration.id);
+        // Exported totals can already include equipped copies.
+        ownedDecoCounts[decoration.id] = Math.max(ownedDecoCounts[decoration.id] ?? 0, quantity);
+      }
+    }
+    if (!Array.isArray(parsed)) {
+      for (const field of ['decorations', 'ownedDecoIds', 'equippedDecorationIdCounts']) {
+        if (field in parsed && !Array.isArray(parsed[field])) invalidDecoration(field);
+      }
+      if ('ownedDecoCounts' in parsed && (!parsed.ownedDecoCounts || typeof parsed.ownedDecoCounts !== 'object'
+        || Array.isArray(parsed.ownedDecoCounts))) invalidDecoration('ownedDecoCounts');
     }
 
     // Extract Profile / Ranks
@@ -742,10 +985,17 @@ export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload
       isReFrameworkSnapshot: isRefSnapshot,
       replaceMaterials:
         !Array.isArray(parsed) &&
-        Boolean(parsed.materials && typeof parsed.materials === 'object'),
+        Boolean(parsed.materials && typeof parsed.materials === 'object' && !Array.isArray(parsed.materials)),
       hasWeaponsField,
       hasArmorField,
       hasDecosField,
+      decorationCountsComplete: decorationImportIssues.length === 0 && hasDecosField && (isRefSnapshot
+        ? parsed.decorationCountsComplete === true || (parsed.decorationCountsComplete === undefined
+          && parsed.exporterRevision === 2 && Array.isArray(parsed.decorations))
+        : parsed.decorationCountsComplete !== false),
+      decorationImportIssues: [...new Set(decorationImportIssues)],
+      weaponImportIssues: [...new Set(weaponImportIssues)],
+      armorImportIssues: [...new Set(armorImportIssues)],
       hasTalismansField,
       profilePatch,
       talismans,

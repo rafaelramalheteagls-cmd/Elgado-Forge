@@ -7,8 +7,8 @@ import {
   WeaponCombo,
   WeaponItem,
 } from '../types/sunbreak';
-import { ARMOR_DB } from './armorCatalog';
-import { getEquipmentRecipe, MATERIALS_CATALOG, SunbreakMaterialMeta } from './materialsCatalog';
+import { MHRICE_ARMOR_DB, MHRICE_DECORATIONS_DB, MHRICE_SKILLS_DB, MHRICE_WEAPONS_DB, LEGACY_CATALOGS } from './mhriceAdapter';
+import { MATERIALS_CATALOG, SunbreakMaterialMeta } from './materialsCatalog';
 import {
   DEFAULT_TALISMAN,
   META_BUILD_TEMPLATES,
@@ -16,21 +16,20 @@ import {
   STARTER_LOADOUT,
 } from './metaTemplates';
 import { MONSTERS_DB } from './monsterCatalog';
-import { DECORATIONS_DB, SKILLS_DB } from './skillsAndDecos';
-import { WEAPONS_DB } from './weaponCatalog';
+
+
+export const ARMOR_DB = MHRICE_ARMOR_DB;
+export const DECORATIONS_DB = MHRICE_DECORATIONS_DB;
+export const SKILLS_DB = MHRICE_SKILLS_DB;
+export const WEAPONS_DB = MHRICE_WEAPONS_DB;
 
 export {
-  ARMOR_DB,
-  DECORATIONS_DB,
   DEFAULT_TALISMAN,
-  getEquipmentRecipe,
   MATERIALS_CATALOG,
   META_BUILD_TEMPLATES,
   MONSTERS_DB,
   PRESET_TALISMANS,
-  SKILLS_DB,
   STARTER_LOADOUT,
-  WEAPONS_DB,
 };
 export type { SunbreakMaterialMeta };
 
@@ -56,7 +55,7 @@ export const WEAPON_COMBOS_DB: WeaponCombo[] = [
     id: 'combo_gs_strongarm',
     weaponClass: 'Great Sword',
     name: 'Strongarm Stance -> True Charged Slash',
-    description: 'Countered TCS loop with Strongarm 1.35x charge bonus factored in.',
+    description: 'Approximate Strongarm TCS. Assumes both slashes connect.',
     durationSec: 4.8,
     hits: [
       { moveName: 'TCS First Hit', motionValue: 22, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
@@ -67,7 +66,7 @@ export const WEAPON_COMBOS_DB: WeaponCombo[] = [
     id: 'combo_ls_harvest',
     weaponClass: 'Long Sword',
     name: 'Harvest Moon -> Sacred Sheathe Combo',
-    description: 'Full 3-bar Sacred Sheathe release + Spirit Reckoning finisher.',
+    description: 'Approximate Sacred Sheathe and Harvest Moon preview. Spirit gauge and counter timing are assumed.',
     durationSec: 5.2,
     hits: [
       { moveName: 'Sacred Sheathe Hit 1', motionValue: 40, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
@@ -83,18 +82,18 @@ export const WEAPON_COMBOS_DB: WeaponCombo[] = [
     description: 'Shield counter uppercut followed by fast elemental lateral slash sequence.',
     durationSec: 4.5,
     hits: [
-      { moveName: 'Metsu Counter Hit 1', motionValue: 90, elementMod: 0, sharpnessCost: 0, statusProcChance: 0, isAerialOrWirebug: true },
-      { moveName: 'Metsu Falling Bash', motionValue: 110, elementMod: 0, sharpnessCost: 0, statusProcChance: 0, isAerialOrWirebug: true },
+      { moveName: 'Metsu Counter', motionValue: 80, damageType: 'Blunt', elementMod: 0, sharpnessCost: 0, statusProcChance: 0, isAerialOrWirebug: true },
+      { moveName: 'Metsu Counter Follow-up (3 hits)', motionValue: 90, damageType: 'Blunt', elementMod: 0, sharpnessCost: 0, statusProcChance: 0, isAerialOrWirebug: true },
       { moveName: 'Lateral Slash', motionValue: 26, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
-      { moveName: 'Return Stroke', motionValue: 24, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
-      { moveName: 'Spinning Reaper', motionValue: 56, elementMod: 1.2, sharpnessCost: 1, statusProcChance: 0.33 },
+      { moveName: 'Return Stroke', motionValue: 26, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
+      { moveName: 'Spinning Reaper', motionValue: 65, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
     ],
   },
   {
     id: 'combo_db_spiral',
     weaponClass: 'Dual Blades',
     name: 'Spiral Slash + Demon Flurry Rush',
-    description: 'High-frequency elemental multi-hit burst on weakspots.',
+    description: 'Approximate elemental sequence. Assumes Spiral Slash connects on a valid hitzone.',
     durationSec: 4.2,
     hits: [
       { moveName: 'Spiral Slash Drill (x6)', motionValue: 120, elementMod: 6.0, sharpnessCost: 3, statusProcChance: 0.33, isAerialOrWirebug: true },
@@ -106,31 +105,31 @@ export const WEAPON_COMBOS_DB: WeaponCombo[] = [
     id: 'combo_lance_leaping',
     weaponClass: 'Lance',
     name: 'Leaping Thrust -> Anchor Rage Loop',
-    description: 'Continuous elemental Leaping Thrust + high poke cadence.',
+    description: 'Leaping Thrust, High Thrust I and a successful Anchor Rage counter. Aura uptime is excluded.',
     durationSec: 3.8,
     hits: [
-      { moveName: 'Leaping Thrust (x3 hits)', motionValue: 69, elementMod: 2.7, sharpnessCost: 2, statusProcChance: 0.33 },
-      { moveName: 'High Thrust I', motionValue: 30, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
-      { moveName: 'Anchor Rage Counter', motionValue: 85, elementMod: 1.2, sharpnessCost: 1, statusProcChance: 0.33, isAerialOrWirebug: true },
+      { moveName: 'Leaping Thrust (3 hits)', motionValue: 64, elementMod: 3.5, sharpnessCost: 1, statusProcChance: 0.33 },
+      { moveName: 'High Thrust I', motionValue: 27, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
+      { moveName: 'Anchor Rage Counter', motionValue: 70, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33, isAerialOrWirebug: true },
     ],
   },
   {
     id: 'combo_gl_bullet_barrage',
     weaponClass: 'Gunlance',
-    name: 'Reverse Blast -> Full Burst Sweep',
-    description: 'Slam into Wide Sweep + Full Burst shell discharge.',
+    name: 'Overhead Slam -> Full Burst -> Wide Sweep',
+    description: 'Starts with a fully loaded Gunlance. Full Burst fires every loaded shell.',
     durationSec: 4.4,
     hits: [
-      { moveName: 'Overhead Slam', motionValue: 52, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
-      { moveName: 'Full Burst Shells (fixed + fire)', motionValue: 115, elementMod: 1.0, sharpnessCost: 2, statusProcChance: 0 },
+      { moveName: 'Overhead Slam', motionValue: 48, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
+      { moveName: 'Full Burst Shells', motionValue: 0, elementMod: 0, sharpnessCost: 2, statusProcChance: 0, gunlanceFullBurst: true },
       { moveName: 'Wide Sweep', motionValue: 68, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
     ],
   },
   {
     id: 'combo_ham_impact_crater',
     weaponClass: 'Hammer',
-    name: 'Courage Charge -> Impact Burst',
-    description: 'Courage elemental charge chain ending in Impact Crater.',
+    name: 'Courage Charge Sequence',
+    description: 'Approximate Courage sequence without separately simulated Impact Burst follow-ups.',
     durationSec: 4.6,
     hits: [
       { moveName: 'Courage Lv1 Smash', motionValue: 45, elementMod: 1.4, sharpnessCost: 1, statusProcChance: 0.33 },
@@ -142,7 +141,7 @@ export const WEAPON_COMBOS_DB: WeaponCombo[] = [
     id: 'combo_hh_magnificent_trio',
     weaponClass: 'Hunting Horn',
     name: 'Crush -> Multi-Crush -> Shockwave',
-    description: 'Silkbind Shockwave active elemental horn rotation.',
+    description: 'Approximate Silkbind Shockwave preview. Weapon hits and shockwaves are grouped.',
     durationSec: 4.1,
     hits: [
       { moveName: 'Crush + Shockwave', motionValue: 58, elementMod: 2.5, sharpnessCost: 1, statusProcChance: 0.33 },
@@ -153,93 +152,113 @@ export const WEAPON_COMBOS_DB: WeaponCombo[] = [
   {
     id: 'combo_sa_morph_loop',
     weaponClass: 'Switch Axe',
-    name: 'Rapid Morph Loop (Double Slash -> Morph)',
-    description: 'Element Phial amped morph loop with phial ticks.',
+    name: 'Double Slash -> Axe Morph -> Sword Morph',
+    description: 'Weapon hits from the morph loop. Phial damage and amp-state effects are excluded.',
     durationSec: 3.9,
     hits: [
-      { moveName: 'Sword Double Slash', motionValue: 66, elementMod: 2.0, sharpnessCost: 2, statusProcChance: 0.33 },
-      { moveName: 'Morph Axe Sweep (Rapid Morph)', motionValue: 96, elementMod: 1.8, sharpnessCost: 1, statusProcChance: 0.33 },
-      { moveName: 'Morph Sword Overhead + Phial', motionValue: 74, elementMod: 2.8, sharpnessCost: 1, statusProcChance: 0.33 },
+      { moveName: 'Sword Double Slash', motionValue: 64, elementMod: 2.0, sharpnessCost: 2, statusProcChance: 0.33 },
+      { moveName: 'Axe Morph Double Slash', motionValue: 55, elementMod: 2.0, sharpnessCost: 2, statusProcChance: 0.33 },
+      { moveName: 'Sword Morph Slash', motionValue: 23, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
     ],
   },
   {
     id: 'combo_cb_saed',
     weaponClass: 'Charge Blade',
-    name: 'Counter Peak -> Element SAED',
-    description: 'Full 5-phial elemental Super Amped Element Discharge.',
+    name: 'Charged Shield SAED',
+    description: 'Ground SAED with five full phials and a charged shield. Phials are evaluated on the selected part.',
     durationSec: 4.7,
     hits: [
-      { moveName: 'Axe Slam', motionValue: 95, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
-      { moveName: 'Shockwave Hit', motionValue: 110, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
-      { moveName: '5x Element Phial Bursts', motionValue: 35, elementMod: 18.0, sharpnessCost: 0, statusProcChance: 0 },
+      { moveName: 'SAED First Swing', motionValue: 15 * 1.1, elementMod: 1.0, sharpnessCost: 1, statusProcChance: 0.33 },
+      { moveName: 'SAED Axe Slam', motionValue: 90 * 1.1, elementMod: 2.0, sharpnessCost: 1, statusProcChance: 0.33 },
+      { moveName: 'SAED Third Hit', motionValue: 72, elementMod: 1.0, sharpnessCost: 0, statusProcChance: 0.33 },
+      { moveName: 'SAED Phials', motionValue: 0, elementMod: 0, sharpnessCost: 0, statusProcChance: 0, chargeBladeSaedPhials: true },
     ],
   },
   {
     id: 'combo_ig_tetraseal',
     weaponClass: 'Insect Glaive',
-    name: 'Tornado Slash -> Diving Wyvern',
-    description: 'Ground triple-up combo into aerial Diving Wyvern finisher.',
+    name: 'Tornado Slash -> Vault -> Diving Wyvern',
+    description: 'Weapon hits without kinsect damage, extract bonuses or aerial bounce multipliers.',
     durationSec: 4.5,
     hits: [
-      { moveName: 'Rising Slash + Wide Sweep', motionValue: 68, elementMod: 2.0, sharpnessCost: 2, statusProcChance: 0.33 },
-      { moveName: 'Tornado Slash (x2)', motionValue: 72, elementMod: 2.2, sharpnessCost: 2, statusProcChance: 0.33 },
-      { moveName: 'Diving Wyvern (Charged)', motionValue: 140, elementMod: 1.6, sharpnessCost: 1, statusProcChance: 0.33, isAerialOrWirebug: true },
+      { moveName: 'Tornado Slash (2 hits)', motionValue: 66, elementMod: 2.0, sharpnessCost: 2, statusProcChance: 0.33 },
+      { moveName: 'Diving Wyvern', motionValue: 80, elementMod: 3.0, sharpnessCost: 1, statusProcChance: 0.33, isAerialOrWirebug: true },
     ],
   },
   {
     id: 'combo_lbg_pierce',
     weaponClass: 'Light Bowgun',
-    name: 'Rapid Fire Pierce Lv2 Burst',
-    description: '5-shot Rapid Fire Pierce 2 magazine volley at critical distance.',
-    durationSec: 3.4,
+    name: 'Physical Ammo Magazine',
+    description: 'Estimates damage per base magazine at critical distance. Pierce uses the selected tick count.',
     hits: [
-      { moveName: 'RF Pierce 2 Volley (15 ticks)', motionValue: 135, elementMod: 0, sharpnessCost: 0, statusProcChance: 0 },
-      { moveName: 'Fanning Maneuver Follow-up', motionValue: 81, elementMod: 0, sharpnessCost: 0, statusProcChance: 0, isAerialOrWirebug: true },
+      { moveName: 'Physical Ammo Magazine', motionValue: 0, elementMod: 0, sharpnessCost: 0, statusProcChance: 0, rangedAttack: 'bowgun-magazine' },
     ],
   },
   {
     id: 'combo_hbg_crouch',
     weaponClass: 'Heavy Bowgun',
-    name: 'Crouching Fire Pierce / Spread 3',
-    description: 'Sustained crouched heavy shot volley at critical distance.',
-    durationSec: 3.5,
+    name: 'Physical Ammo Magazine',
+    description: 'Uses the base magazine at critical distance. Supported ammo uses an estimated uncharged fire-and-reload cycle.',
     hits: [
-      { moveName: 'Spread/Pierce 3 Volley (x4)', motionValue: 192, elementMod: 0, sharpnessCost: 0, statusProcChance: 0 },
-      { moveName: 'Wyvernsnipe / Counter', motionValue: 74, elementMod: 0, sharpnessCost: 0, statusProcChance: 0 },
+      { moveName: 'Physical Ammo Magazine', motionValue: 0, elementMod: 0, sharpnessCost: 0, statusProcChance: 0, rangedAttack: 'bowgun-magazine' },
     ],
   },
   {
     id: 'combo_bow_dash_dance',
     weaponClass: 'Bow',
-    name: 'Lv4 Dash Dance -> Power Shot -> Absolute Power',
-    description: 'Stamina-neutral Berserk+Strife Lv4 rapid/spread dash dance.',
+    name: 'Dash Dance -> Power Shot -> Power Volley',
+    description: 'Starts at the highest unlocked charge, at critical distance and with no coating. Pierce counts the first tick per arrow.',
     durationSec: 3.2,
     hits: [
-      { moveName: 'Lv4 Charge Shot (4 arrows)', motionValue: 64, elementMod: 4.2, sharpnessCost: 0, statusProcChance: 0 },
-      { moveName: 'Power Shot (5 arrows)', motionValue: 78, elementMod: 5.0, sharpnessCost: 0, statusProcChance: 0 },
-      { moveName: 'Absolute Power Shot (5 arrows)', motionValue: 82, elementMod: 5.2, sharpnessCost: 0, statusProcChance: 0 },
+      { moveName: 'Charged Shot', motionValue: 0, elementMod: 0, sharpnessCost: 0, statusProcChance: 0, rangedAttack: 'bow-shot' },
+      { moveName: 'Power Shot', motionValue: 0, elementMod: 0, sharpnessCost: 0, statusProcChance: 0, rangedAttack: 'bow-shot' },
+      { moveName: 'Power Volley', motionValue: 0, elementMod: 0, sharpnessCost: 0, statusProcChance: 0, rangedAttack: 'bow-shot' },
     ],
   },
 ];
 
 
 
+function indexById<T extends { id: string }>(catalog: T[]): Map<string, T> {
+  const index = new Map<string, T>();
+  for (const item of catalog) {
+    if (!index.has(item.id)) index.set(item.id, item);
+  }
+  return index;
+}
+
+const skillsById = indexById(SKILLS_DB);
+const weaponsById = indexById(WEAPONS_DB);
+const armorById = indexById(ARMOR_DB);
+const decorationsById = indexById(DECORATIONS_DB);
+
 export function getSkillById(id: string): SkillDefinition | undefined {
-  return SKILLS_DB.find((s) => s.id === id);
+  return skillsById.get(id) ?? LEGACY_CATALOGS.skills.find((s) => s.id === id);
 }
 
 export function getWeaponById(id: string): WeaponItem | undefined {
-  return WEAPONS_DB.find((w) => w.id === id);
+  return weaponsById.get(id) ?? LEGACY_CATALOGS.weapons.find((w) => w.id === id);
 }
 
 export function getArmorById(id: string): ArmorItem | undefined {
-  return ARMOR_DB.find((a) => a.id === id);
+  const directMatch = armorById.get(id);
+  if (directMatch) return directMatch;
+  const sourceMatch = /^armor:(head|chest|arm|waist|leg):(\d+)$/.exec(id);
+  if (sourceMatch) {
+    const slots = { head: 'Helm', chest: 'Chest', arm: 'Arms', waist: 'Waist', leg: 'Legs' };
+    const slot = slots[sourceMatch[1] as keyof typeof slots];
+    return ARMOR_DB.find((a) => a.slot === slot && a.sourceId === Number(sourceMatch[2]));
+  }
+  return LEGACY_CATALOGS.armor.find((a) => a.id === id);
 }
 
 export function getDecorationById(id: string): DecorationItem | undefined {
-  return DECORATIONS_DB.find((d) => d.id === id);
+  return decorationsById.get(id) ?? LEGACY_CATALOGS.decorations.find((d) => d.id === id);
 }
 
 export function getMonsterById(id: string): MonsterDefinition | undefined {
   return MONSTERS_DB.find((m) => m.id === id);
 }
+
+// Exposed for development diagnostics and automated catalog checks.
+export { CATALOG_COUNTS, validateCatalogs } from './catalogValidation';

@@ -19,10 +19,10 @@ import { ReFrameworkScriptModal } from './ReFrameworkScriptModal';
 import {
   ARMOR_DB,
   DECORATIONS_DB,
-  getEquipmentRecipe,
+  getArmorById,
+  getDecorationById,
   getWeaponById,
   MATERIALS_CATALOG,
-  META_BUILD_TEMPLATES,
   MONSTERS_DB,
   SKILLS_DB,
   WEAPON_CLASSES,
@@ -32,10 +32,10 @@ import {
   evaluateMetaRecommendations,
   getHunterProgressionStage,
   getSkillDisplayName,
-  getUnlockedIdsForRank,
   RANK_TIERS,
+  RECOMMENDATION_TEMPLATES,
 } from '../engine/damageCalculator';
-import { getSkillWeightsForWeapon } from '../engine/ownedBuildOptimizer';
+import { getSkillWeightsForWeapon, optimizeTemplateTalisman } from '../engine/ownedBuildOptimizer';
 import {
   BuildLoadout,
   HunterProfile,
@@ -49,6 +49,12 @@ import {
   exportInventoryAsJson,
   exportMaterialsAsCsv,
   mergeUniqueTalismans,
+  mergeImportedDecorations,
+  mergeImportedEquipment,
+  getTalismanSignature,
+  mergeSteamProfile,
+  parseBuildsBackup,
+  partitionBuildsBackup,
   parseCharmOrInventoryPayload,
 } from '../utils/storageAndShare';
 import { SAMPLE_REFRAMEWORK_EXPORT_JSON } from '../utils/reframeworkLuaScript';
@@ -59,9 +65,10 @@ interface MetaAndSyncViewProps {
   profile: HunterProfile;
   inventory: InventoryState;
   savedBuilds: BuildLoadout[];
+  onImportBuilds: (builds: BuildLoadout[]) => void;
   initialSubTab?: SubTab;
   subTabRequestKey?: number;
-  onUpdateProfile: (next: HunterProfile) => void;
+  onUpdateProfile: React.Dispatch<React.SetStateAction<HunterProfile>>;
   onUpdateInventory: (next: InventoryState) => void;
   onLoadBuild: (loadout: BuildLoadout) => void;
 }
@@ -72,6 +79,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
   profile,
   inventory,
   savedBuilds,
+  onImportBuilds,
   initialSubTab = 'recommendations',
   subTabRequestKey = 0,
   onUpdateProfile,
@@ -98,10 +106,25 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
   const [steamLoading, setSteamLoading] = useState(false);
   const [steamError, setSteamError] = useState('');
   const [steamNotice, setSteamNotice] = useState('');
+  const [buildsBackup, setBuildsBackup] = useState<NonNullable<ReturnType<typeof parseBuildsBackup>>>();
+  const [buildsBackupMessage, setBuildsBackupMessage] = useState('');
+  const buildsBackupInput = useRef<HTMLInputElement>(null);
+  const buildsBackupRequest = useRef(0);
+  const buildsBackupPreview = buildsBackup ? partitionBuildsBackup(buildsBackup.builds, savedBuilds) : undefined;
 
   // Inventory & REFramework Importer state
   const [importText, setImportText] = useState('');
   const [importStatus, setImportStatus] = useState('');
+  const [importPreview, setImportPreview] = useState<{
+    raw: string;
+    inventory: InventoryState;
+    profile: HunterProfile;
+    replace: boolean;
+    decorationCountsIncomplete: boolean;
+    decorationImportIssues: string[];
+    equipmentImportIssues: Array<{ label: string; rows: string[] }>;
+    groups: Array<{ name: string; changes: string[] }>;
+  }>();
   const [importError, setImportError] = useState('');
   const [importUnmatched, setImportUnmatched] = useState<string[]>([]);
   const [replaceBoxOnImport, setReplaceBoxOnImport] = useState(true);
@@ -146,11 +169,13 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
   const stageCounts = useMemo(() => {
     const base =
       weaponFilter === 'All'
-        ? META_BUILD_TEMPLATES
-        : META_BUILD_TEMPLATES.filter((t) => t.weaponClass === weaponFilter);
+        ? RECOMMENDATION_TEMPLATES
+        : RECOMMENDATION_TEMPLATES.filter((t) => t.weaponClass === weaponFilter);
     const counts: Record<RankTier | 'All', number> = {
       All: base.length,
+      LR: 0,
       HR: 0,
+      MR: 0,
       'Early MR': 0,
       'Story MR': 0,
       'MR 10+': 0,
@@ -163,7 +188,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
   }, [weaponFilter]);
 
   const recommendations = useMemo(() => {
-    const list = evaluateMetaRecommendations(profile, inventory, weaponFilter, stageFilter);
+    const list = evaluateMetaRecommendations(profile, inventory, weaponFilter, stageFilter, optimizeTemplateTalisman);
     const filtered = eligibleOnly ? list.filter((item) => item.rankEligible) : [...list];
     if (sortBy === 'progression') {
       filtered.sort(
@@ -233,42 +258,12 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
       if (!res.ok || !data.ok) {
         setSteamError(data.error || 'Steam synchronization failed.');
       } else {
-        const nextProfile: HunterProfile = {
-          ...profile,
-          hunterName: data.personaName || profile.hunterName,
-          steamId64: data.steamId64,
-          steamPersona: data.personaName,
-          steamAvatarUrl: data.avatarUrl,
-          playtimeHours: data.playtimeHours,
-          hr: data.estimatedHr,
-          mr: data.estimatedMr,
-          ar: data.estimatedAr,
-          achievementsUnlocked: data.achievementsUnlocked,
-          achievementsTotal: data.achievementsTotal,
-          unlockedMilestones: data.milestones,
-          lastSyncedAt: new Date().toISOString(),
-        };
-        onUpdateProfile(nextProfile);
-
-        // Automatically unlock rank-appropriate gear in inventory
-        const unlocked = getUnlockedIdsForRank(data.estimatedMr, data.estimatedAr);
-        onUpdateInventory({
-          ...inventory,
-          ownedWeaponIds: Array.from(
-            new Set([...inventory.ownedWeaponIds, ...unlocked.weaponIds])
-          ),
-          ownedArmorIds: Array.from(
-            new Set([...inventory.ownedArmorIds, ...unlocked.armorIds])
-          ),
-          ownedDecoIds: Array.from(
-            new Set([...inventory.ownedDecoIds, ...unlocked.decoIds])
-          ),
-          lastInventorySyncAt: new Date().toISOString(),
-        });
+        const syncedAt = new Date().toISOString();
+        onUpdateProfile(current => mergeSteamProfile(current, data, syncedAt));
 
         setSteamNotice(
           data.warning ||
-            `Synced ${data.personaName} (${data.achievementsUnlocked}/${data.achievementsTotal} achievements · MR ${data.estimatedMr} · AR ${data.estimatedAr}).`
+            `Synced ${data.personaName} (${data.achievementsUnlocked}/${data.achievementsTotal} achievements).`
         );
       }
     } catch {
@@ -278,32 +273,8 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
     }
   };
 
-  const handleSyncInventoryToRank = async (mr: number, ar: number) => {
-    try {
-      const res = await fetch('/api/inventory/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mr, ar }),
-      });
-      const data = await res.json();
-      if (data?.ok) {
-        onUpdateInventory({
-          ...inventory,
-          ownedWeaponIds: data.unlockedWeaponIds,
-          ownedArmorIds: data.unlockedArmorIds,
-          ownedDecoIds: data.unlockedDecoIds,
-          lastInventorySyncAt: data.syncedAt,
-        });
-        setImportStatus(
-          `Inventory synchronized to MR ${mr} / AR ${ar}: ${data.unlockedWeaponIds.length} weapons, ${data.unlockedArmorIds.length} armor pieces unlocked.`
-        );
-      }
-    } catch {
-      setImportStatus('Unable to reach inventory sync endpoint.');
-    }
-  };
-
-  const applyImportPayload = (rawPayload: string) => {
+  const applyImportPayload = (rawPayload: string, confirmed = false) => {
+    setImportPreview(undefined);
     setImportError('');
     setImportStatus('');
     setImportUnmatched([]);
@@ -343,40 +314,14 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
       );
 
       const shouldReplace = parsed.isReFrameworkSnapshot && replaceBoxOnImport;
+      const replaceMaterials = shouldReplace && parsed.replaceMaterials;
 
-      const nextWeapons = shouldReplace
-        ? parsed.hasWeaponsField
-          ? parsed.ownedWeaponIds
-          : inventory.ownedWeaponIds
-        : Array.from(new Set([...inventory.ownedWeaponIds, ...parsed.ownedWeaponIds]));
+      const { ownedWeaponIds: nextWeapons, ownedArmorIds: nextArmor } =
+        mergeImportedEquipment(inventory, parsed, shouldReplace);
 
-      const nextArmor = shouldReplace
-        ? parsed.hasArmorField
-          ? parsed.ownedArmorIds
-          : inventory.ownedArmorIds
-        : Array.from(new Set([...inventory.ownedArmorIds, ...parsed.ownedArmorIds]));
-
-      const nextDecos = shouldReplace
-        ? parsed.hasDecosField
-          ? parsed.ownedDecoIds
-          : inventory.ownedDecoIds
-        : Array.from(new Set([...inventory.ownedDecoIds, ...parsed.ownedDecoIds]));
-
-      const nextDecoCounts: Record<string, number> = shouldReplace
-        ? parsed.hasDecosField
-          ? parsed.ownedDecoCounts
-          : inventory.ownedDecoCounts ?? {}
-        : (() => {
-            const mergedCounts: Record<string, number> = {
-              ...(inventory.ownedDecoCounts ?? {}),
-            };
-            for (const [id, qty] of Object.entries(parsed.ownedDecoCounts)) {
-              if (qty > 0) {
-                mergedCounts[id] = Math.max(mergedCounts[id] ?? 0, qty);
-              }
-            }
-            return mergedCounts;
-          })();
+      const replaceDecorations = shouldReplace && parsed.decorationCountsComplete;
+      const { ownedDecoIds: nextDecos, ownedDecoCounts: nextDecoCounts } =
+        mergeImportedDecorations(inventory, parsed, shouldReplace);
 
       const { merged: mergedTalismans, addedCount: addedTalismans } = shouldReplace
         ? parsed.hasTalismansField
@@ -388,21 +333,59 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
       const newArmorCount = nextArmor.filter((id) => !prevArmor.has(id)).length;
       const newDecoCount = nextDecos.filter((id) => !prevDecos.has(id)).length;
 
-      onUpdateInventory({
+      const nextInventory: InventoryState = {
         ...inventory,
         talismans: mergedTalismans,
         ownedWeaponIds: nextWeapons,
         ownedArmorIds: nextArmor,
         ownedDecoIds: nextDecos,
         ownedDecoCounts: nextDecoCounts,
-        materials: parsed.replaceMaterials
+        materials: replaceMaterials
           ? parsed.materials
           : {
               ...inventory.materials,
               ...parsed.materials,
             },
         lastInventorySyncAt: new Date().toISOString(),
-      });
+      };
+
+      if (!confirmed || importPreview?.inventory !== inventory || importPreview.profile !== profile
+        || importPreview.replace !== replaceBoxOnImport) {
+        const diff = (before: Record<string, number>, after: Record<string, number>, label: (id: string) => string = id => id) =>
+          [...new Set([...Object.keys(before), ...Object.keys(after)])].flatMap(id => {
+            const previous = before[id] ?? 0;
+            const next = after[id] ?? 0;
+            return previous === next ? [] : [`${label(id)} · ${previous} → ${next}`];
+          });
+        const quantities = (ids: string[], counts?: Record<string, number>) =>
+          Object.fromEntries(ids.map(id => [id, counts?.[id] ?? 1]));
+        const names = new Map([...existingRealTalismans, ...mergedTalismans].map(t => [getTalismanSignature(t), t.name]));
+        const groups = [
+          { name: 'Weapons', changes: diff(quantities(inventory.ownedWeaponIds), quantities(nextWeapons), id => getWeaponById(id)?.name ?? id) },
+          { name: 'Armor', changes: diff(quantities(inventory.ownedArmorIds), quantities(nextArmor), id => getArmorById(id)?.name ?? id) },
+          { name: 'Decorations', changes: diff(quantities(inventory.ownedDecoIds, inventory.ownedDecoCounts), quantities(nextDecos, nextDecoCounts), id => getDecorationById(id)?.name ?? id) },
+          { name: 'Talismans', changes: diff(quantities(existingRealTalismans.map(getTalismanSignature)), quantities(mergedTalismans.map(getTalismanSignature)), id => names.get(id) ?? id) },
+          { name: 'Materials', changes: diff(inventory.materials, nextInventory.materials) },
+        ];
+        if (parsed.profilePatch) {
+          groups.push({ name: 'Ranks', changes: diff(
+            { HR: profile.hr, MR: profile.mr, AR: profile.ar },
+            { HR: parsed.profilePatch.hr ?? profile.hr, MR: parsed.profilePatch.mr ?? profile.mr, AR: parsed.profilePatch.ar ?? profile.ar },
+          ) });
+        }
+        setImportPreview({
+          raw: rawPayload, inventory, profile, replace: replaceBoxOnImport, groups,
+          decorationCountsIncomplete: parsed.isReFrameworkSnapshot && !parsed.decorationCountsComplete,
+          decorationImportIssues: parsed.decorationImportIssues,
+          equipmentImportIssues: [
+            { label: 'Weapons', rows: parsed.weaponImportIssues },
+            { label: 'Armor', rows: parsed.armorImportIssues },
+          ].filter(group => group.rows.length > 0),
+        });
+        setImportUnmatched(parsed.stats.unmatchedItems);
+        return;
+      }
+      onUpdateInventory(nextInventory);
 
       if (hasProfileUpdate && parsed.profilePatch) {
         onUpdateProfile({
@@ -418,7 +401,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
       const parts: string[] = [];
       if (matCount > 0) {
         parts.push(
-          parsed.replaceMaterials
+          replaceMaterials
             ? `${matCount} materials replaced`
             : `${matCount} materials updated`
         );
@@ -434,23 +417,27 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
       }
       if (parsed.hasWeaponsField || parsed.ownedWeaponIds.length > 0) {
         parts.push(
-          shouldReplace
+          shouldReplace && parsed.weaponImportIssues.length === 0
             ? `${nextWeapons.length} weapon(s) synced`
             : `+${newWeaponCount} weapon(s)`
         );
       }
       if (parsed.hasArmorField || parsed.ownedArmorIds.length > 0) {
         parts.push(
-          shouldReplace
+          shouldReplace && parsed.armorImportIssues.length === 0
             ? `${nextArmor.length} armor piece(s) synced`
             : `+${newArmorCount} armor piece(s)`
         );
       }
       if (parsed.hasDecosField || parsed.ownedDecoIds.length > 0) {
         parts.push(
-          shouldReplace
+          replaceDecorations
             ? `${nextDecos.length} decoration(s) synced`
-            : `+${newDecoCount} decoration(s)`
+            : parsed.decorationCountsComplete
+              ? `+${newDecoCount} decoration(s)`
+              : shouldReplace
+                ? 'Partial decoration sync. Reported totals updated and unreported jewels kept.'
+                : 'Partial decoration sync. Higher quantities were kept.'
         );
       }
       if (hasProfileUpdate && parsed.profilePatch) {
@@ -534,6 +521,20 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
       applyImportPayload(content);
     } catch {
       setImportError(`Unable to read file "${file.name}".`);
+    }
+  };
+
+  const handleBuildsBackup = async (file: File) => {
+    const request = ++buildsBackupRequest.current;
+    setBuildsBackup(undefined);
+    setBuildsBackupMessage('');
+    try {
+      const backup = parseBuildsBackup(await file.text());
+      if (request !== buildsBackupRequest.current) return;
+      if (backup) setBuildsBackup(backup);
+      else setBuildsBackupMessage('Invalid backup. Select a Builds JSON file exported by Elgado Forge.');
+    } catch {
+      if (request === buildsBackupRequest.current) setBuildsBackupMessage(`Unable to read "${file.name}".`);
     }
   };
 
@@ -716,14 +717,14 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                     className="accent-[#D4A853]"
                   />
                   <span>
-                    Unlocked for my Rank only (MR {profile.mr} / AR {profile.ar})
+                    Matches my rank criteria only (MR {profile.mr} / AR {profile.ar})
                   </span>
                 </label>
               </div>
 
               <div className="flex items-center gap-4 text-xs">
                 <span className="font-mono-tabular text-[#98A2B3]">
-                  Showing {recommendations.length} of {META_BUILD_TEMPLATES.length} builds
+                  Showing {recommendations.length} of {RECOMMENDATION_TEMPLATES.length} builds
                 </span>
                 <button
                   type="button"
@@ -738,7 +739,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {recommendations.map((rec) => {
-              const { template, stats, rankEligible, ownershipPercent, ownedCount, totalPieces, missingItems } =
+              const { template, stats, rankEligible, ownershipPercent, ownedCount, totalPieces, missingItems, missingDecorations } =
                 rec;
               const weaponItem = getWeaponById(template.loadout.weaponId);
               const skillWeights = weaponItem ? getSkillWeightsForWeapon(weaponItem) : {};
@@ -798,6 +799,10 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                         )}
                       </p>
                     )}
+                    <p className="mt-1 text-[11px] text-[#ECEFF4]">
+                      <span className="text-[#667085]">Talisman: </span>
+                      {template.loadout.talisman.name}
+                    </p>
 
                     <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg border border-white/[0.07] bg-[#0B0D10] p-3 text-xs">
                       <div>
@@ -812,7 +817,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                       </div>
                       <div>
                         <span className="block text-[11px] text-[#667085]">
-                          Inventory Match
+                          Gear Owned
                         </span>
                         <span className="font-mono-tabular font-medium text-[#ECEFF4]">
                           {ownedCount}/{totalPieces} ({ownershipPercent}%)
@@ -820,10 +825,10 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                       </div>
                       <div>
                         <span className="block text-[11px] text-[#667085]">
-                          Affinity / Elem
+                          Weakspot Affinity / Elem
                         </span>
                         <span className="font-mono-tabular font-medium text-[#ECEFF4]">
-                          {stats.totalAffinity}% ·{' '}
+                          {stats.weakspotAffinity}% ·{' '}
                           {stats.effectiveElement > 0
                             ? `${stats.effectiveElement.toFixed(0)} EFE`
                             : 'Raw'}
@@ -842,23 +847,12 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                             <span> +{missingItems.length - 3} more</span>
                           )}
                         </div>
-                        {rec.craftableWithMaterials ? (
-                          <div className="text-emerald-400 font-medium">
-                            All materials needed to forge missing pieces are in your Material Box.
-                          </div>
-                        ) : (
-                          <div>
-                            <span className="font-medium text-[#ECEFF4]">
-                              Materials to Farm:{' '}
-                            </span>
-                            <span className="font-mono-tabular">
-                              {rec.missingMaterials
-                                .slice(0, 4)
-                                .map((m) => `${m.shortfall}x ${m.name}`)
-                                .join(', ')}
-                            </span>
-                          </div>
-                        )}
+                      </div>
+                    )}
+                    {missingDecorations.length > 0 && (
+                      <div className="mt-3 text-xs text-[#98A2B3]">
+                        <span className="font-medium text-amber-400">Missing Decorations </span>
+                        {missingDecorations.join(', ')}
                       </div>
                     )}
                   </div>
@@ -898,7 +892,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                   Steam Account Sync (Monster Hunter Rise AppID 1446780)
                 </h2>
                 <p className="mt-1 text-xs text-[#98A2B3]">
-                  Reads public Steam profile playtime and unlocked Sunbreak achievements to calibrate your Hunter Rank, Master Rank, and Anomaly Research unlocks.
+                  Reads public playtime and achievements for rank estimates. Recommendations use the ranks you enter or import from REFramework.
                 </p>
               </div>
 
@@ -956,6 +950,11 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                       {profile.playtimeHours} hrs · {profile.achievementsUnlocked}/
                       {profile.achievementsTotal} achievements
                     </p>
+                    {profile.steamEstimatedRanks && (
+                      <p className="mt-1 text-xs text-[#98A2B3]">
+                        Steam estimates · HR {profile.steamEstimatedRanks.hr} · MR {profile.steamEstimatedRanks.mr} · AR {profile.steamEstimatedRanks.ar}
+                      </p>
+                    )}
                     {profile.unlockedMilestones.length > 0 && (
                       <p className="mt-1 text-[11px] text-[#D4A853]">
                         {profile.unlockedMilestones.join(' · ')}
@@ -972,13 +971,6 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                 <h2 className="font-display text-base font-semibold text-[#ECEFF4]">
                   Personal Rank Profile
                 </h2>
-                <button
-                  type="button"
-                  onClick={() => handleSyncInventoryToRank(profile.mr, profile.ar)}
-                  className="rounded-lg border border-[#D4A853]/40 bg-[#D4A853]/10 px-3 py-1.5 text-xs font-medium text-[#D4A853] hover:bg-[#D4A853]/20"
-                >
-                  Sync Gear Unlocks to Rank
-                </button>
               </div>
 
               <div className="grid grid-cols-3 gap-4">
@@ -1345,7 +1337,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
               <textarea
                 rows={4}
                 value={importText}
-                onChange={(e) => setImportText(e.target.value)}
+                onChange={(e) => { setImportText(e.target.value); setImportPreview(undefined); }}
                 placeholder={`Paste REFramework JSON snapshot or Charm CSV lines:\nWeakness Exploit,2,Critical Boost,1,2,2,0`}
                 className="w-full rounded-lg border border-white/15 bg-[#0B0D10] p-3 font-mono-tabular text-xs text-[#ECEFF4] placeholder-[#667085] focus:border-[#D4A853] focus:outline-none"
               />
@@ -1354,7 +1346,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                 <div className="flex flex-wrap items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => setImportText(SAMPLE_REFRAMEWORK_EXPORT_JSON)}
+                    onClick={() => { setImportText(SAMPLE_REFRAMEWORK_EXPORT_JSON); setImportPreview(undefined); }}
                     className="inline-flex items-center gap-1.5 text-xs text-[#98A2B3] hover:text-[#ECEFF4]"
                   >
                     <Sparkles className="h-3.5 w-3.5 text-[#D4A853]" aria-hidden="true" />
@@ -1365,26 +1357,12 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                     <input
                       type="checkbox"
                       checked={replaceBoxOnImport}
-                      onChange={(e) => setReplaceBoxOnImport(e.target.checked)}
+                      onChange={(e) => { setReplaceBoxOnImport(e.target.checked); setImportPreview(undefined); }}
                       className="accent-[#D4A853]"
                     />
                     <span>Replace box with snapshot</span>
                   </label>
 
-                  <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-[#98A2B3] hover:text-[#ECEFF4]">
-                    <input
-                      type="checkbox"
-                      checked={inventory.autoSyncEnabled}
-                      onChange={(e) =>
-                        onUpdateInventory({
-                          ...inventory,
-                          autoSyncEnabled: e.target.checked,
-                        })
-                      }
-                      className="accent-[#D4A853]"
-                    />
-                    <span>Rank auto-sync (15s)</span>
-                  </label>
                 </div>
 
                 <button
@@ -1403,6 +1381,45 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                 </p>
               )}
 
+              {importPreview && (
+                <section className="space-y-2 rounded-lg border border-white/15 p-3 text-xs text-[#ECEFF4]">
+                  <h3 className="font-medium">Import Preview</h3>
+                  {importPreview.decorationCountsIncomplete && (
+                    <p className="text-amber-400">The export has incomplete decoration counts. Existing quantities will be kept unless the export reports more copies.</p>
+                  )}
+                  {importPreview.decorationImportIssues.length > 0 && (
+                    <details className="text-amber-400">
+                      <summary className="cursor-pointer">Decoration rows that could not be imported · {importPreview.decorationImportIssues.length}</summary>
+                      <ul className="mt-1 max-h-32 overflow-auto">
+                        {importPreview.decorationImportIssues.map(issue => <li key={issue}>{issue}</li>)}
+                      </ul>
+                    </details>
+                  )}
+                  {importPreview.equipmentImportIssues.map(({ label, rows }) => (
+                    <details key={label} className="text-amber-400">
+                      <summary className="cursor-pointer">{label} · {rows.length} unreadable rows. Existing equipment will be kept.</summary>
+                      <ul className="mt-1 max-h-32 overflow-auto">
+                        {rows.map(row => <li key={row}>{row}</li>)}
+                      </ul>
+                    </details>
+                  ))}
+                  {importPreview.groups.filter(group => group.changes.length > 0).map(group => (
+                    <details key={group.name}>
+                      <summary className="cursor-pointer">{group.name} · {group.changes.length} changes</summary>
+                      <ul className="mt-1 max-h-44 overflow-auto text-[#98A2B3]">
+                        {group.changes.map((change, index) => <li key={index}>{change}</li>)}
+                      </ul>
+                    </details>
+                  ))}
+                  {importPreview.groups.every(group => !group.changes.length) && <p>No inventory or rank changes detected.</p>}
+                  <div className="flex gap-2">
+                    <button type="button" className="rounded bg-[#D4A853] px-3 py-1.5 text-[#0B0D10]"
+                      onClick={() => applyImportPayload(importPreview.raw, true)}>Apply Import</button>
+                    <button type="button" className="rounded border border-white/15 px-3 py-1.5"
+                      onClick={() => setImportPreview(undefined)}>Cancel</button>
+                  </div>
+                </section>
+              )}
               {importStatus && (
                 <p className="text-xs text-emerald-400 flex items-center gap-1.5">
                   <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -1444,7 +1461,41 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                   <Download className="h-3 w-3 text-[#D4A853]" aria-hidden="true" />
                   <span>Builds JSON</span>
                 </button>
+                <button type="button" onClick={() => buildsBackupInput.current?.click()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-[#0B0D10] px-2.5 py-1.5 text-[11px] font-medium text-[#ECEFF4] hover:border-[#D4A853]">
+                  <Upload className="h-3 w-3 text-[#D4A853]" aria-hidden="true" />
+                  Import Builds JSON
+                </button>
+                <input ref={buildsBackupInput} type="file" accept=".json,application/json" hidden onChange={event => {
+                  const file = event.currentTarget.files?.[0];
+                  if (file) void handleBuildsBackup(file);
+                  event.currentTarget.value = '';
+                }} />
               </div>
+              {buildsBackup && buildsBackupPreview && (
+                <section className="space-y-2 rounded-lg border border-white/15 p-3 text-xs text-[#ECEFF4]">
+                  <h3 className="font-medium">Build Backup Preview</h3>
+                  <p>{buildsBackupPreview.added.length} to restore · {buildsBackupPreview.duplicates.length} duplicate IDs skipped · {buildsBackup.invalidRows.length} invalid rows</p>
+                  {buildsBackupPreview.added.length > 0 && (
+                    <ul className="max-h-32 overflow-auto text-[#98A2B3]">
+                      {buildsBackupPreview.added.map(build => <li key={build.id}>{build.name}</li>)}
+                    </ul>
+                  )}
+                  {buildsBackup.invalidRows.length > 0 && <p className="text-amber-400">Invalid rows · {buildsBackup.invalidRows.join(', ')}</p>}
+                  <div className="flex gap-2">
+                    <button type="button" disabled={buildsBackupPreview.added.length === 0}
+                      className="rounded bg-[#D4A853] px-3 py-1.5 text-[#0B0D10] disabled:opacity-40"
+                      onClick={() => {
+                        onImportBuilds(buildsBackupPreview.added);
+                        setBuildsBackupMessage(`Restored ${buildsBackupPreview.added.length} saved builds.`);
+                        setBuildsBackup(undefined);
+                      }}>Restore Builds</button>
+                    <button type="button" onClick={() => setBuildsBackup(undefined)}
+                      className="rounded border border-white/15 px-3 py-1.5">Cancel</button>
+                  </div>
+                </section>
+              )}
+              {buildsBackupMessage && <p role="status" className="text-xs text-[#98A2B3]">{buildsBackupMessage}</p>}
             </section>
 
             {/* Material Box (Item Box Tracker — Mod-Free) */}
@@ -1588,16 +1639,17 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                   ? []
                   : ARMOR_DB.filter(
                       (a) =>
-                        !q ||
+                        a.isSelectable !== false && (!q ||
                         a.name.toLowerCase().includes(q) ||
-                        a.slot.toLowerCase().includes(q)
+                        a.variantLabel?.toLowerCase().includes(q) ||
+                        a.slot.toLowerCase().includes(q))
                     );
               const filteredDecos =
                 invTypeFilter === 'weapons' || invTypeFilter === 'armor'
                   ? []
                   : DECORATIONS_DB.filter((d) => {
                       if (!q) return true;
-                      const skillName = getSkillDisplayName(d.skillId).toLowerCase();
+                      const skillName = (d.skillName ?? getSkillDisplayName(d.skillId)).toLowerCase();
                       return (
                         d.name.toLowerCase().includes(q) ||
                         skillName.includes(q) ||
@@ -1677,7 +1729,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <h2 className="font-display text-base font-semibold text-[#ECEFF4]">
-                        Unlocked Equipment Inventory (
+                        Owned Equipment Inventory (
                         {ownedWeaponSet.size + ownedArmorSet.size + ownedDecoSet.size} /{' '}
                         {WEAPONS_DB.length + ARMOR_DB.length + DECORATIONS_DB.length})
                       </h2>
@@ -1780,7 +1832,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                           className="flex cursor-pointer items-center justify-between py-2 text-xs"
                         >
                           <span className="text-[#ECEFF4]">
-                            {a.name} <span className="text-[#667085]">({a.slot})</span>
+                            {a.name} <span className="text-[#667085]">({a.variantLabel ? `${a.slot} · ${a.variantLabel}` : a.slot})</span>
                           </span>
                           <input
                             type="checkbox"
@@ -1798,37 +1850,55 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                     })}
                     {filteredDecos.map((d) => {
                       const owned = ownedDecoSet.has(d.id);
-                      const qty = inventory.ownedDecoCounts?.[d.id] ?? 0;
-                      const skillLabel = getSkillDisplayName(d.skillId);
+                      const qty = owned ? inventory.ownedDecoCounts?.[d.id] ?? 1 : 0;
+                      const setQuantity = (quantity: number) => {
+                        const ownedDecoCounts = { ...inventory.ownedDecoCounts };
+                        if (quantity > 0) ownedDecoCounts[d.id] = quantity;
+                        else delete ownedDecoCounts[d.id];
+                        const ownedDecoIds = inventory.ownedDecoIds.filter((id) => id !== d.id);
+                        if (quantity > 0) ownedDecoIds.push(d.id);
+                        onUpdateInventory({ ...inventory, ownedDecoIds, ownedDecoCounts });
+                      };
+                      const skillLabel = d.skillName ?? getSkillDisplayName(d.skillId);
                       return (
-                        <label
+                        <div
                           key={d.id}
-                          className="flex cursor-pointer items-center justify-between gap-3 py-2 text-xs"
+                          className="flex items-center justify-between gap-3 py-2 text-xs"
                         >
                           <span className="min-w-0 text-[#ECEFF4]">
                             <span className="font-medium">{d.name}</span>{' '}
                             <span className="text-[#98A2B3]">
-                              (+{d.points} {skillLabel} · Lv{d.slotLevel}
-                              {d.isRampage ? ' Rampage' : ''})
+                              ({d.isRampage ? `${skillLabel} · Rampage` : `+${d.points} ${skillLabel}`} · Lv${d.slotLevel})
                             </span>
-                            {owned && qty > 0 && (
-                              <span className="ml-2 inline-block rounded bg-[#D4A853]/15 px-1.5 py-0.5 font-mono-tabular text-[10px] font-semibold text-[#D4A853]">
-                                x{qty}
-                              </span>
-                            )}
                           </span>
-                          <input
-                            type="checkbox"
-                            checked={owned}
-                            onChange={() => {
-                              const next = owned
-                                ? inventory.ownedDecoIds.filter((id) => id !== d.id)
-                                : [...inventory.ownedDecoIds, d.id];
-                              onUpdateInventory({ ...inventory, ownedDecoIds: next });
-                            }}
-                            className="shrink-0 accent-[#D4A853]"
-                          />
-                        </label>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <input
+                              key={qty}
+                              aria-label={`${d.name} quantity`}
+                              type="number"
+                              min={0}
+                              max={9999}
+                              defaultValue={qty}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') event.currentTarget.blur();
+                              }}
+                              onBlur={(event) => {
+                                const raw = event.currentTarget.valueAsNumber;
+                                const next = Number.isFinite(raw) ? Math.max(0, Math.min(9999, Math.trunc(raw))) : qty;
+                                event.currentTarget.value = String(next);
+                                if (next !== qty) setQuantity(next);
+                              }}
+                              className="w-16 rounded border border-white/15 bg-[#0B0D10] px-2 py-1 font-mono-tabular text-[#ECEFF4]"
+                            />
+                            <input
+                              aria-label={`Own ${d.name}`}
+                              type="checkbox"
+                              checked={owned}
+                              onChange={() => setQuantity(owned ? 0 : 1)}
+                              className="accent-[#D4A853]"
+                            />
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
@@ -1988,17 +2058,6 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
               </thead>
               <tbody className="divide-y divide-white/[0.06]">
                 {dbResults.map((row, idx) => {
-                  const recipe =
-                    dbType === 'weapons' || dbType === 'armor' || dbType === 'decorations'
-                      ? getEquipmentRecipe(
-                          dbType === 'weapons'
-                            ? 'weapon'
-                            : dbType === 'armor'
-                            ? 'armor'
-                            : 'decoration',
-                          String(row.id ?? '')
-                        )
-                      : null;
                   return (
                     <tr key={String(row.id ?? idx)} className="hover:bg-white/[0.02]">
                       <td className="px-5 py-3 font-medium text-[#ECEFF4]">
@@ -2040,7 +2099,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                           )}
                           {dbType === 'decorations' &&
                             `Slot Lv${row.slotLevel} · +${row.points} ${
-                              SKILLS_DB.find((s) => s.id === row.skillId)?.name ?? row.skillId
+                              row.skillName ?? SKILLS_DB.find((s) => s.id === row.skillId)?.name ?? row.skillId
                             }`}
                           {dbType === 'skills' &&
                             `Max Lv${row.maxLevel} · ${String(row.summary ?? '')}`}
@@ -2049,11 +2108,6 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                               Array.isArray(row.hitzones) ? row.hitzones.length : 0
                             } hitzones`}
                         </div>
-                        {recipe && (
-                          <div className="mt-1 font-sans text-[11px] text-[#98A2B3]">
-                            Recipe: {recipe.materials.map((m) => `${m.quantity}x ${m.name}`).join(', ')} ({recipe.zennyCost.toLocaleString()}z)
-                          </div>
-                        )}
                       </td>
                     </tr>
                   );
@@ -2076,6 +2130,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
         onClose={() => setReFrameworkModalOpen(false)}
         onLoadSampleJson={(sample) => {
           setImportText(sample);
+          setImportPreview(undefined);
           setImportError('');
         }}
       />

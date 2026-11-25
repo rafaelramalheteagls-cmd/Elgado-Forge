@@ -1,31 +1,35 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   CheckCircle2,
-  Hammer,
   PackageOpen,
   RefreshCw,
   SlidersHorizontal,
 } from 'lucide-react';
 import { MaterialBoxModal } from './MaterialBoxModal';
+import { COMMUNITY_ARCHETYPES, GAMECAT_SET_SEARCH, SUNBREAK_META_INDEX, SUNBREAK_SOLO_PROGRESSION } from '../data/communityArchetypes';
 import {
   ARMOR_DB,
   DECORATIONS_DB,
   getArmorById,
   getDecorationById,
+  getWeaponById,
+  SKILLS_DB,
   MATERIALS_CATALOG,
-  META_BUILD_TEMPLATES,
   WEAPON_CLASSES,
   WEAPONS_DB,
 } from '../data/sunbreakDb';
-import { getSkillDisplayName, RANK_TIERS } from '../engine/damageCalculator';
+import { estimateGunlanceFullBurst, getBowgunHandling, getGunlanceShellingLevel, getGunlanceShellingType, getPrimaryBowgunAmmo } from '../data/weaponMechanics';
+import { getSkillDisplayName, RANK_TIERS, RECOMMENDATION_TEMPLATES } from '../engine/damageCalculator';
 import {
-  evaluateOwnedBuildMatches,
+  type BuildPreference,
+  type BuildSearchConstraints,
+  type SynthesizedBoxBuild,
   getSkillWeightsForWeapon,
   OwnedReadiness,
   OwnedTemplateMatch,
-  synthesizeOwnedBoxBuilds,
 } from '../engine/ownedBuildOptimizer';
+import type { OwnedBuildRequest, OwnedBuildResponse } from '../engine/ownedBuild.worker';
 import {
   BuildLoadout,
   HunterProfile,
@@ -34,6 +38,8 @@ import {
 } from '../types/sunbreak';
 
 interface OwnedRecommendationsViewProps {
+  activeBuild: BuildLoadout;
+  onCompareBuild: (loadout: BuildLoadout) => void;
   profile: HunterProfile;
   inventory: InventoryState;
   onUpdateInventory: (next: InventoryState) => void;
@@ -41,21 +47,102 @@ interface OwnedRecommendationsViewProps {
   onGoToSync: () => void;
 }
 
-type FocusMode = 'all' | 'custom' | 'ready' | 'craftable' | 'partial';
+type FocusMode = 'all' | 'custom' | 'ready' | 'partial';
 
 const READINESS_LABELS: Record<OwnedReadiness, string> = {
   ready: 'Ready to Equip',
-  craftable: 'Craftable Now (Zero Farming)',
   partial: 'Partial Box Match',
 };
 
 const READINESS_TEXT_CLASSES: Record<OwnedReadiness, string> = {
   ready: 'text-emerald-400',
-  craftable: 'text-[#D4A853]',
   partial: 'text-[#98A2B3]',
 };
 
+function PrioritySkillLevels({ skills }: { skills: OwnedTemplateMatch['prioritySkills'] }) {
+  if (skills.length === 0) return null;
+  return (
+    <p className="mt-2.5 text-[11px] text-[#98A2B3]">
+      <span className="text-[#667085]">Priority skills: </span>
+      {skills.map(({ name, level, target }) => (
+        <span key={name} className={level >= target ? 'mr-2 text-emerald-400' : 'mr-2 text-amber-400'}>
+          {name} {level}/{target}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function WeaponSetup({ weapon, skills, ammoId }: {
+  weapon: OwnedTemplateMatch['adaptedWeapon'];
+  skills: Record<string, number>;
+  ammoId?: BuildLoadout['bowgunAmmo'];
+}) {
+  const shelling = getGunlanceShellingType(weapon);
+  const ammo = getPrimaryBowgunAmmo(weapon, ammoId);
+  if (shelling) return <p className="mt-1 text-xs text-[#98A2B3]">Shelling · {shelling} Lv{getGunlanceShellingLevel(weapon)}</p>;
+  if (ammo) {
+    const handling = getBowgunHandling(weapon, skills, ammoId);
+    return <p className="mt-1 text-xs text-[#98A2B3]">
+      Primary ammo · {ammo.label}
+      {handling && ` · ${handling.recoil} recoil · ${handling.reload} reload (skills only)`}
+    </p>;
+  }
+  return null;
+}
+
+function ComfortSkills({ skills }: { skills: string[] }) {
+  if (skills.length === 0) return null;
+  return (
+    <p className="mt-1 text-[11px] text-[#98A2B3]">
+      <span className="text-[#667085]">Survival &amp; comfort · </span>{skills.join(' · ')}
+    </p>
+  );
+}
+
+function BuildExplanation({ build }: { build: SynthesizedBoxBuild }) {
+  const { loadout } = build;
+  const armor = [loadout.helmId, loadout.chestId, loadout.armsId, loadout.waistId, loadout.legsId]
+    .map(getArmorById);
+  const skillLine = (skills: Array<{ skillId: string; level: number }>) =>
+    skills.filter(skill => skill.skillId && skill.level > 0)
+      .map(skill => `${getSkillDisplayName(skill.skillId)} ${skill.level}`).join(' · ');
+  const decorations = new Map<string, number>();
+  for (const id of [...Object.values(loadout.decorations).flat(), loadout.rampageDecoId]) {
+    if (id) decorations.set(id, (decorations.get(id) ?? 0) + 1);
+  }
+  const talisman = loadout.talisman;
+  const talismanSkills = skillLine([
+    { skillId: talisman.skill1Id, level: talisman.skill1Level },
+    { skillId: talisman.skill2Id, level: talisman.skill2Level },
+  ]);
+  return (
+    <details className="mt-3 rounded-lg border border-white/10 p-2.5 text-xs text-[#98A2B3]">
+      <summary className="cursor-pointer font-medium text-[#ECEFF4]">Why this setup?</summary>
+      <ul className="mt-2 space-y-1">
+        {armor.map(piece => piece && <li key={piece.id}>
+          <span className="text-[#ECEFF4]">{piece.name}</span> · [{piece.slots.join('-')}]
+          {' · '}{skillLine(Object.entries(piece.skills).map(([skillId, level]) => ({ skillId, level })))}
+        </li>)}
+        <li><span className="text-[#ECEFF4]">{talisman.name}</span> · [{talisman.slots.join('-')}]
+          {talismanSkills && ` · ${talismanSkills}`}</li>
+        {[...decorations].map(([id, count]) => {
+          const deco = getDecorationById(id);
+          if (!deco) return null;
+          const contribution = deco.isRampage ? deco.skillName : skillLine((deco.sourceSkills ?? [
+            { skillId: deco.skillId, level: deco.points },
+          ]).map(skill => ({ ...skill, level: skill.level * count })));
+          return <li key={id}><span className="text-[#ECEFF4]">{deco.name} ×{count}</span> · {contribution}</li>;
+        })}
+      </ul>
+      <PrioritySkillLevels skills={build.prioritySkills} />
+    </details>
+  );
+}
+
 export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> = ({
+  activeBuild,
+  onCompareBuild,
   profile,
   inventory,
   onUpdateInventory,
@@ -65,8 +152,27 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
   const [focusMode, setFocusMode] = useState<FocusMode>('all');
   const [weaponFilter, setWeaponFilter] = useState<string>('All');
   const [stageFilter, setStageFilter] = useState<RankTier | 'All'>('All');
-  const [includeCraftableInBox, setIncludeCraftableInBox] = useState(false);
+  const [eligibleOnly, setEligibleOnly] = useState(false);
+  const [buildPreference, setBuildPreference] = useState<BuildPreference>('balanced');
+  const [allowHealthDrain, setAllowHealthDrain] = useState(false);
+  const [craftableNow, setCraftableNow] = useState(false);
+  const [constraints, setConstraints] = useState<BuildSearchConstraints>({});
+  const archetype = COMMUNITY_ARCHETYPES.find(item => item.id === constraints.communityArchetypeId);
+  const [copiedTargets, setCopiedTargets] = useState('');
+  const [objectiveWeaponId, setObjectiveWeaponId] = useState<string>();
+  const [skillId, setSkillId] = useState('');
+  const [skillLevel, setSkillLevel] = useState(1);
+  const selectedSkill = SKILLS_DB.find(skill => skill.id === skillId);
+  const lockableArmor = [
+    ['Helm', activeBuild.helmId], ['Chest', activeBuild.chestId], ['Arms', activeBuild.armsId],
+    ['Waist', activeBuild.waistId], ['Legs', activeBuild.legsId],
+  ] as const;
   const [materialBoxOpen, setMaterialBoxOpen] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [calculation, setCalculation] = useState<{
+    request: OwnedBuildRequest;
+    result: OwnedBuildResponse | 'error';
+  }>();
 
   const stockedMaterialCount = useMemo(
     () =>
@@ -75,27 +181,46 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
     [inventory.materials]
   );
 
-  const synthesized = useMemo(
-    () =>
-      synthesizeOwnedBoxBuilds(inventory, {
-        weaponClassFilter: weaponFilter,
-        includeCraftable: includeCraftableInBox,
-        maxBuilds: weaponFilter === 'All' ? 42 : 24,
-      }),
-    [inventory, weaponFilter, includeCraftableInBox]
-  );
+  const request = useMemo<OwnedBuildRequest>(() => ({
+    profile, inventory, weaponFilter, preference: buildPreference, allowHealthDrain, craftableNow, constraints, objectiveWeaponId,
+  }), [profile, inventory, weaponFilter, buildPreference, allowHealthDrain, craftableNow, constraints, objectiveWeaponId]);
+  useEffect(() => {
+    let worker: Worker | undefined;
+    let active = true;
+    const finish = (result: OwnedBuildResponse | 'error') => {
+      if (active) setCalculation({ request, result });
+      worker?.terminate();
+    };
+    try {
+      worker = new Worker(new URL('../engine/ownedBuild.worker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = ({ data }: MessageEvent<OwnedBuildResponse>) => finish(data);
+      worker.onerror = () => finish('error');
+      worker.onmessageerror = () => finish('error');
+      worker.postMessage(request);
+    } catch {
+      finish('error');
+    }
+    return () => {
+      active = false;
+      worker?.terminate();
+    };
+  }, [request, retryCount]);
+
+  const result = calculation?.request === request ? calculation.result : undefined;
+  const synthesized = result === 'error' ? undefined : result?.synthesized;
+  const damageAlternative = result && result !== 'error'
+    ? result.alternatives?.find(item => item.objective === 'damage')?.build : undefined;
 
   const allMatches = useMemo(
-    () =>
-      evaluateOwnedBuildMatches(profile, inventory, {
-        weaponFilter,
-        stageFilter,
-      }),
-    [profile, inventory, weaponFilter, stageFilter]
+    () => result && result !== 'error' ? result.matches.filter((match) =>
+      (stageFilter === 'All' || match.template.rankTier === stageFilter)
+      && (!eligibleOnly || match.rankEligible)
+    ) : [],
+    [result, stageFilter, eligibleOnly]
   );
 
   const readinessCounts = useMemo(() => {
-    const counts = { ready: 0, craftable: 0, partial: 0 };
+    const counts = { ready: 0, partial: 0 };
     for (const m of allMatches) {
       counts[m.readiness]++;
     }
@@ -106,9 +231,6 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
     if (focusMode === 'custom') return [];
     if (focusMode === 'ready') {
       return allMatches.filter((m) => m.readiness === 'ready');
-    }
-    if (focusMode === 'craftable') {
-      return allMatches.filter((m) => m.readiness === 'craftable');
     }
     if (focusMode === 'partial') {
       return allMatches.filter((m) => m.readiness === 'partial');
@@ -121,7 +243,7 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
 
   const hasEmptyBox =
     inventory.ownedWeaponIds.length === 0 ||
-    synthesized.missingArmorSlots.length > 0;
+    Boolean(synthesized?.missingArmorSlots.length);
 
   return (
     <div className="mx-auto max-w-[1440px] px-6 py-6 space-y-6">
@@ -136,7 +258,7 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
               Owned Equipment &amp; Material Box Build Recommendations
             </h1>
             <p className="mt-1.5 text-xs leading-relaxed text-[#98A2B3]">
-              Assembles optimal sets strictly from the weapons, armor, decorations, and talismans in your box—and surfaces which of the {META_BUILD_TEMPLATES.length} curated Sunbreak builds you can equip right now or forge directly from your Material Box.
+              Ranks sets built from your inventory and compares your gear against {RECOMMENDATION_TEMPLATES.length} Sunbreak templates.
             </p>
           </div>
 
@@ -192,7 +314,7 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
           <div className="rounded-lg border border-white/[0.07] bg-[#0B0D10] px-3.5 py-2.5">
             <span className="block text-[11px] text-[#667085]">Synced Talismans</span>
             <span className="mt-0.5 block font-mono-tabular text-base font-semibold text-[#ECEFF4]">
-              {inventory.talismans.length}
+              {inventory.talismans.filter((talisman) => talisman.source !== 'Preset').length}
             </span>
           </div>
           <div className="rounded-lg border border-white/[0.07] bg-[#0B0D10] px-3.5 py-2.5">
@@ -220,19 +342,15 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                 { id: 'all', label: 'All Recommendations' },
                 {
                   id: 'custom',
-                  label: `Custom Box Sets (${synthesized.builds.length})`,
+                  label: synthesized ? `Custom Box Sets (${synthesized.builds.length})` : 'Custom Box Sets',
                 },
                 {
                   id: 'ready',
-                  label: `Ready to Equip (${readinessCounts.ready})`,
-                },
-                {
-                  id: 'craftable',
-                  label: `Craftable Now (${readinessCounts.craftable})`,
+                  label: synthesized ? `Ready to Equip (${readinessCounts.ready})` : 'Ready to Equip',
                 },
                 {
                   id: 'partial',
-                  label: `Closest Meta (${readinessCounts.partial})`,
+                  label: synthesized ? `Closest Meta (${readinessCounts.partial})` : 'Closest Meta',
                 },
               ] as Array<{ id: FocusMode; label: string }>
             ).map((tab) => {
@@ -254,15 +372,7 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
             })}
           </div>
 
-          <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-[#ECEFF4]">
-            <input
-              type="checkbox"
-              checked={includeCraftableInBox}
-              onChange={(e) => setIncludeCraftableInBox(e.target.checked)}
-              className="accent-[#D4A853]"
-            />
-            <span>Include forgeable gear from Material Box</span>
-          </label>
+
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -275,7 +385,13 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
             <select
               aria-label="Filter by Weapon Class"
               value={weaponFilter}
-              onChange={(e) => setWeaponFilter(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setWeaponFilter(next);
+                if (archetype && next !== 'All' && next !== archetype.weaponClass) {
+                  setConstraints(current => ({ ...current, communityArchetypeId: undefined }));
+                }
+              }}
               className="rounded-lg border border-white/15 bg-[#0B0D10] px-3 py-1.5 text-xs font-medium text-[#ECEFF4] focus:border-[#D4A853] focus:outline-none"
             >
               <option value="All">All 14 Weapon Classes</option>
@@ -286,30 +402,102 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
               ))}
             </select>
 
+            {showCustomSection && (
+              <select aria-label="Community Archetype"
+                value={constraints.communityArchetypeId ?? ''}
+                onChange={event => {
+                  const id = event.target.value;
+                  const selected = COMMUNITY_ARCHETYPES.find(item => item.id === id);
+                  setConstraints(current => ({ ...current, communityArchetypeId: selected?.id }));
+                  setCopiedTargets('');
+                  if (selected) setWeaponFilter(selected.weaponClass);
+                }}
+                className="rounded-lg border border-white/15 bg-[#0B0D10] px-3 py-1.5 text-xs font-medium text-[#ECEFF4]">
+                <option value="">Community Archetype</option>
+                {COMMUNITY_ARCHETYPES.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            )}
+
             <select
-              aria-label="Filter Curated Builds by Stage"
-              value={stageFilter}
-              onChange={(e) => setStageFilter(e.target.value as RankTier | 'All')}
+              aria-label="Build preference"
+              value={buildPreference}
+              onChange={(e) => setBuildPreference(e.target.value === 'comfort' ? 'comfort' : 'balanced')}
               className="rounded-lg border border-white/15 bg-[#0B0D10] px-3 py-1.5 text-xs font-medium text-[#ECEFF4] focus:border-[#D4A853] focus:outline-none"
             >
-              <option value="All">All Progression Stages</option>
-              {RANK_TIERS.map((tier) => (
-                <option key={tier} value={tier}>
-                  {tier}
-                </option>
-              ))}
+              <option value="balanced">Balanced</option>
+              <option value="comfort">Survival &amp; Comfort</option>
             </select>
-          </div>
 
-          <span className="font-mono-tabular text-xs text-[#98A2B3]">
-            {synthesized.builds.length} box sets · {readinessCounts.ready} ready ·{' '}
-            {readinessCounts.craftable} craftable
+            {showCustomSection && (
+              <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-[#ECEFF4]">
+                <input type="checkbox" checked={craftableNow} onChange={event => setCraftableNow(event.target.checked)}
+                  className="accent-[#D4A853]" />
+                <span>Craftable Now</span>
+              </label>
+            )}
+            {showCustomSection && (
+              <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-[#ECEFF4]">
+                <input
+                  type="checkbox"
+                  checked={allowHealthDrain}
+                  onChange={(event) => setAllowHealthDrain(event.target.checked)}
+                  className="accent-[#D4A853]"
+                />
+                <span>Allow health-drain skills in custom sets</span>
+              </label>
+            )}
+
+            {showCuratedSection && (
+              <>
+                <select
+                  aria-label="Filter Curated Templates by Stage"
+                  value={stageFilter}
+                  onChange={(e) => setStageFilter(e.target.value as RankTier | 'All')}
+                  className="rounded-lg border border-white/15 bg-[#0B0D10] px-3 py-1.5 text-xs font-medium text-[#ECEFF4] focus:border-[#D4A853] focus:outline-none"
+                >
+                  <option value="All">All Template Stages</option>
+                  {RANK_TIERS.map((tier) => <option key={tier} value={tier}>{tier}</option>)}
+                </select>
+                <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-[#ECEFF4]">
+                  <input
+                    type="checkbox"
+                    checked={eligibleOnly}
+                    onChange={(e) => setEligibleOnly(e.target.checked)}
+                    className="accent-[#D4A853]"
+                  />
+                  <span>Templates within my rank</span>
+                </label>
+              </>
+            )}
+          </div>
+          {showCustomSection && archetype && (
+            <div className="space-y-1 text-xs text-[#98A2B3]">
+              <p>Endgame guide · {archetype.note} Results use your selected inventory mode and locks.</p>
+              <div className="flex flex-wrap gap-3 text-[#D4A853]">
+                <a href={archetype.source} target="_blank" rel="noreferrer">Weapon guide</a>
+                <a href={SUNBREAK_META_INDEX} target="_blank" rel="noreferrer">Sunbreak Megathread</a>
+                <a href={SUNBREAK_SOLO_PROGRESSION} target="_blank" rel="noreferrer">Solo Endgame Progression</a>
+                <a href={GAMECAT_SET_SEARCH} target="_blank" rel="noreferrer">Open GameCat</a>
+              </div>
+            </div>
+          )}
+
+          <span role="status" className="font-mono-tabular text-xs text-[#98A2B3]">
+            {synthesized
+              ? `${synthesized.builds.length} box sets · ${readinessCounts.ready} ready`
+              : result === 'error' ? 'Build calculation failed.' : 'Calculating builds…'}
           </span>
+          {result === 'error' && (
+            <button type="button" className="text-xs text-[#D4A853] hover:underline" onClick={() => {
+              setCalculation(undefined);
+              setRetryCount((count) => count + 1);
+            }}>Retry</button>
+          )}
         </div>
       </section>
 
       {/* SECTION A: CUSTOM BOX-ASSEMBLED BUILDS */}
-      {showCustomSection && (
+      {showCustomSection && synthesized && (
         <section className="space-y-4">
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div>
@@ -317,26 +505,143 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                 Custom Sets Assembled From Your Box
               </h2>
               <p className="text-xs text-[#98A2B3]">
-                {includeCraftableInBox
-                  ? 'Optimized across your owned gear, talismans, and decorations—plus pieces you can craft immediately with stocked materials.'
-                  : 'Built strictly using only the weapons, armor pieces, decorations, and talismans currently marked as owned in your box.'}
+                {craftableNow
+                  ? 'Includes gear and decorations you can craft with the materials in your box. Check zenny and unlock requirements before crafting.'
+                  : 'Uses the gear, decorations, and talismans marked as owned.'}
               </p>
             </div>
+            <details className="mt-2 text-xs text-[#ECEFF4]">
+              <summary className="cursor-pointer font-medium">Equipment locks &amp; skill targets</summary>
+              <div className="mt-2 flex flex-wrap gap-3">
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={Boolean(constraints.weaponId)} onChange={event => {
+                    const checked = event.target.checked;
+                    setConstraints(current => ({ ...current, weaponId: checked ? activeBuild.weaponId : undefined }));
+                    if (checked) setWeaponFilter(activeBuild.weaponClass);
+                  }} />
+                  {getWeaponById(activeBuild.weaponId)?.name ?? 'Current weapon'}
+                </label>
+                {lockableArmor.map(([slot, id]) => (
+                  <label key={slot} className="flex items-center gap-1.5">
+                    <input type="checkbox" disabled={!id} checked={Boolean(constraints.armor?.[slot])}
+                      onChange={event => setConstraints(current => ({
+                        ...current, armor: { ...current.armor, [slot]: event.target.checked ? id : undefined },
+                      }))} />
+                    {getArmorById(id)?.name ?? slot}
+                  </label>
+                ))}
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" disabled={!inventory.talismans.some(t => t.id === activeBuild.talisman.id)}
+                    checked={Boolean(constraints.talismanId)}
+                    onChange={event => setConstraints(current => ({ ...current, talismanId: event.target.checked ? activeBuild.talisman.id : undefined }))} />
+                  {activeBuild.talisman.name}
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <select aria-label="Target skill" value={skillId} onChange={event => { setSkillId(event.target.value); setSkillLevel(1); }}
+                  className="rounded bg-[#0B0D10] p-1.5">
+                  <option value="">Select a skill</option>
+                  {SKILLS_DB.map(skill => <option key={skill.id} value={skill.id}>{skill.name}</option>)}
+                </select>
+                <select aria-label="Target level" value={skillLevel} onChange={event => setSkillLevel(Number(event.target.value))}
+                  className="rounded bg-[#0B0D10] p-1.5">
+                  {Array.from({ length: selectedSkill?.maxLevel ?? 1 }, (_, index) => <option key={index}>{index + 1}</option>)}
+                </select>
+                <button type="button" disabled={!selectedSkill} className="rounded border border-white/15 px-2 py-1"
+                  onClick={() => setConstraints(current => ({ ...current, skillTargets: { ...current.skillTargets, [skillId]: skillLevel } }))}>
+                  Add target
+                </button>
+                <button type="button" className="rounded border border-white/15 px-2 py-1" onClick={() => setConstraints({})}>
+                  Clear constraints
+                </button>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {Object.entries(constraints.skillTargets ?? {}).map(([id, level]) => (
+                  <button key={id} type="button" className="rounded border border-white/15 px-2 py-1"
+                    aria-label={`Remove ${getSkillDisplayName(id)} target`}
+                    onClick={() => setConstraints(current => {
+                      const skillTargets = { ...current.skillTargets };
+                      delete skillTargets[id];
+                      return { ...current, skillTargets };
+                    })}>{getSkillDisplayName(id)} Lv{level} ×</button>
+                ))}
+              </div>
+            </details>
           </div>
 
-          {synthesized.builds.length === 0 ? (
+          {result && result !== 'error' && result.alternatives && (
+            <section className="space-y-3 rounded-xl border border-white/10 bg-[#12161C] p-4">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-display font-semibold">Build objectives · {getWeaponById(objectiveWeaponId ?? '')?.name}</h3>
+                  <p className="text-xs text-[#98A2B3]">Simulation target for all sets: enraged Primordial Malzeno, head.</p>
+                </div>
+                <button type="button" className="text-xs text-[#D4A853]" onClick={() => setObjectiveWeaponId(undefined)}>Close</button>
+              </div>
+              <div className="grid gap-3 lg:grid-cols-3">
+                {result.alternatives.map(({ objective, build }) => {
+                  const burst = build && estimateGunlanceFullBurst(build.weapon, build.stats, 0, 1);
+                  const changedPieces = build && damageAlternative && objective !== 'damage'
+                    ? (['helmId', 'chestId', 'armsId', 'waistId', 'legsId'] as const)
+                        .filter(slot => build.loadout[slot] !== damageAlternative.loadout[slot]).length : 0;
+                  const dpsDelta = build?.objectiveDps !== undefined && damageAlternative?.objectiveDps !== undefined
+                    ? build.objectiveDps - damageAlternative.objectiveDps : undefined;
+                  return <article key={objective} className="rounded-lg border border-white/10 bg-[#0B0D10] p-3">
+                    <h4 className="font-medium text-[#D4A853]">
+                      {{ damage: 'More damage', comfort: 'More comfort', cost: 'Lower crafting cost' }[objective]}
+                    </h4>
+                    {build ? <>
+                      <p className="mt-1 text-xs text-[#ECEFF4]">
+                        {build.objectiveMagazineDamage !== undefined
+                          ? `${build.objectiveMagazineDamage} damage per magazine`
+                          : `${build.objectiveDps?.toFixed(1) ?? '—'} DPS`} · {build.stats.effectiveRaw.toFixed(1)} EFR
+                      </p>
+                      <p className="text-xs text-[#98A2B3]">
+                        {build.craftingCost === undefined ? 'Crafting cost unavailable' : `${build.craftingCost.toLocaleString('en-US')} zenny`}
+                        {burst && ` · Full Burst ${burst.fixedDamage}`}
+                      </p>
+                      {objective !== 'damage' && dpsDelta !== undefined && (
+                        <p className="mt-1 text-xs text-[#98A2B3]">
+                          {dpsDelta > 0 ? '+' : ''}{dpsDelta.toFixed(1)} DPS vs. damage set · {changedPieces} armor changes
+                          {build.talismanUsed.id !== damageAlternative?.talismanUsed.id && ' · Different talisman'}
+                        </p>
+                      )}
+                      <ComfortSkills skills={build.comfortHighlights} />
+                      <BuildExplanation build={build} />
+                      <div className="mt-2 flex flex-wrap gap-3 text-xs text-[#D4A853]">
+                        <button type="button" onClick={() => onCompareBuild(build.loadout)}>Compare with current</button>
+                        <button type="button" onClick={() => onLoadBuild({ ...build.loadout, id: `build_${Date.now()}` })}>Load into Builder</button>
+                      </div>
+                    </> : <p className="mt-1 text-xs text-[#98A2B3]">No set found with the current inventory and locks.</p>}
+                  </article>;
+                })}
+              </div>
+            </section>
+          )}
+          {synthesized.builds.length === 0 && !hasEmptyBox && synthesized.blockedArmorSlots.length > 0 ? (
+            <div className="rounded-xl border border-white/[0.09] bg-[#12161C] p-6 text-xs text-[#98A2B3]">
+              Your only owned pieces for {synthesized.blockedArmorSlots.join(', ')} have health-drain skills.
+              Enable health-drain skills or add other owned pieces for those slots.
+            </div>
+          ) : synthesized.builds.length === 0 ? (
             <div className="rounded-xl border border-white/[0.09] bg-[#12161C] p-6 space-y-3">
               <h3 className="font-display text-base font-semibold text-[#ECEFF4]">
                 {hasEmptyBox
-                  ? 'More Owned Equipment Slots Needed to Assemble a Full Set'
+                  ? 'More Equipment Needed to Assemble a Full Set'
+                  : archetype ? 'No Set Matches This Archetype'
+                  : craftableNow ? 'No Craftable Set Found'
                   : 'No Matching Weapon Class Found in Your Owned Box'}
               </h3>
               <p className="text-xs leading-relaxed text-[#98A2B3] max-w-2xl">
-                {inventory.ownedWeaponIds.length === 0
-                  ? 'Your owned weapons list is currently empty. Import your REFramework JSON snapshot or mark your unlocked gear in Steam & Inventory Sync.'
+                {archetype
+                  ? 'Check the weapon requirements, equipment locks, and whether Craftable Now can expand your options.'
+                  : craftableNow
+                  ? 'Try another weapon class or sync your latest equipment and materials.'
+                  : inventory.ownedWeaponIds.length === 0
+                  ? 'Your owned weapons list is empty. Import a REFramework snapshot or mark the gear you own in Steam & Inventory Sync.'
                   : synthesized.missingArmorSlots.length > 0
-                  ? `Custom set synthesis requires at least 1 owned (or craftable) piece per armor slot. Currently missing: ${synthesized.missingArmorSlots.join(', ')}.`
-                  : `You do not currently own any ${weaponFilter} weapons in your box. Enable "Include forgeable gear from Material Box" or select All 14 Weapon Classes.`}
+                  ? `Custom set synthesis requires at least 1 owned piece per armor slot. Currently missing: ${synthesized.missingArmorSlots.join(', ')}.`
+                  : `You do not currently own any ${weaponFilter} weapons in your box. Select another weapon class or choose All 14 Weapon Classes.`}
               </p>
               <div className="flex flex-wrap items-center gap-3 pt-1">
                 <button
@@ -347,16 +652,6 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                   <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
                   <span>Go to Steam &amp; Inventory Sync</span>
                 </button>
-                {!includeCraftableInBox && (
-                  <button
-                    type="button"
-                    onClick={() => setIncludeCraftableInBox(true)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-[#0B0D10] px-3.5 py-2 text-xs font-medium text-[#ECEFF4] hover:border-[#D4A853]"
-                  >
-                    <Hammer className="h-3.5 w-3.5 text-[#D4A853]" aria-hidden="true" />
-                    <span>Include Craftable Material Box Gear</span>
-                  </button>
-                )}
               </div>
             </div>
           ) : (
@@ -395,6 +690,7 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                           <h3 className="mt-1 font-display text-lg font-semibold text-[#ECEFF4]">
                             {sb.title}
                           </h3>
+                          <WeaponSetup weapon={sb.weapon} skills={sb.stats.skills} ammoId={sb.loadout.bowgunAmmo} />
                         </div>
 
                         <div className="text-right font-mono-tabular shrink-0">
@@ -411,16 +707,8 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                             <span className="text-[#667085]">Weapon: </span>
                             <span className="font-medium text-[#ECEFF4]">{sb.weapon.name}</span>
                           </div>
-                          <span
-                            className={`shrink-0 text-[10px] font-medium ${
-                              inventory.ownedWeaponIds.includes(sb.weapon.id)
-                                ? 'text-emerald-400'
-                                : 'text-amber-400'
-                            }`}
-                          >
-                            {inventory.ownedWeaponIds.includes(sb.weapon.id)
-                              ? 'Synced'
-                              : 'Craftable'}
+                          <span className="shrink-0 text-[10px] font-medium text-emerald-400">
+                            {sb.craftableWeapon ? 'Craftable' : 'Owned'}
                           </span>
                         </div>
                         <div className="truncate text-[#98A2B3]">
@@ -448,14 +736,23 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                           <span className="text-[#ECEFF4]">{sb.talismanUsed.name}</span>
                         </div>
                       </div>
+                      {sb.craftableItems && sb.craftableItems.length > 0 && (
+                        <p className="mt-2 text-xs text-[#D4A853]">Craftable Now · {sb.craftableItems.join(', ')}</p>
+                      )}
+                      {sb.weaponCraftingSteps && sb.weaponCraftingSteps.length > 1 && (
+                        <p className="mt-1 text-xs text-[#98A2B3]">
+                          Weapon route · {sb.weaponCraftingSteps.join(' → ')}
+                          {sb.craftingCost !== undefined && ` · Set cost ${sb.craftingCost.toLocaleString('en-US')} zenny`}
+                        </p>
+                      )}
 
                       <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                         <div>
                           <span className="block text-[11px] text-[#667085]">
-                            Affinity / Sharpness
+                            Weakspot Affinity / Sharpness
                           </span>
                           <span className="font-mono-tabular font-medium text-[#ECEFF4]">
-                            {sb.stats.totalAffinity}% · {sb.stats.sharpness}
+                            {sb.stats.weakspotAffinity}% · {sb.stats.sharpness}
                           </span>
                         </div>
                         <div>
@@ -479,6 +776,22 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                         </div>
                       </div>
 
+                      <PrioritySkillLevels skills={sb.prioritySkills} />
+                      <BuildExplanation build={sb} />
+                      {archetype && sb.prioritySkills.length > 0 && (
+                        <button type="button" className="mt-2 text-xs text-[#D4A853]" onClick={async () => {
+                          const text = sb.prioritySkills.map(skill => `${skill.name} Lv${skill.target}`).join('\n');
+                          try {
+                            await navigator.clipboard.writeText(text);
+                            setCopiedTargets(sb.id);
+                          } catch {
+                            setCopiedTargets(`failed:${sb.id}`);
+                          }
+                        }}>
+                          {copiedTargets === sb.id ? 'Targets copied' : copiedTargets === `failed:${sb.id}` ? 'Copy failed · retry' : 'Copy skill targets for GameCat'}
+                        </button>
+                      )}
+                      <ComfortSkills skills={sb.comfortHighlights} />
                       {sb.missingSkillHighlights.length > 0 && (
                         <p className="mt-2.5 text-[11px] text-[#98A2B3]">
                           <span className="text-[#667085]">Active Skills: </span>
@@ -487,27 +800,22 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                         </p>
                       )}
 
-                      {sb.usesCraftablePieces ? (
-                        <p className="mt-2 text-xs text-emerald-400">
-                          Forgeable from your Material Box:{' '}
-                          {sb.craftablePieces.map((p) => p.itemName).join(', ')} (
-                          {sb.craftablePieces
-                            .reduce((s, p) => s + p.zennyCost, 0)
-                            .toLocaleString()}
-                          z)
-                        </p>
-                      ) : (
-                        <p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-400">
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                          <span>100% assembled from items currently in your box</span>
-                        </p>
-                      )}
+                      <p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-400">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        <span>{sb.craftableItems?.length ? 'Materials available for this set' : 'Assembled from items currently in your box'}</span>
+                      </p>
                     </div>
 
                     <div className="mt-4 flex items-center justify-between border-t border-white/[0.07] pt-3">
                       <span className="font-mono-tabular text-xs text-[#667085]">
                         Optimization Score {sb.score}
                       </span>
+                      <button type="button" className="px-2 text-xs text-[#D4A853]" onClick={() => onCompareBuild(sb.loadout)}>
+                        Compare with current
+                      </button>
+                      <button type="button" className="px-2 text-xs text-[#D4A853]" onClick={() => setObjectiveWeaponId(sb.weapon.id)}>
+                        Compare objectives
+                      </button>
                       <button
                         type="button"
                         onClick={() =>
@@ -532,7 +840,7 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
       )}
 
       {/* SECTION B: CURATED META BUILDS MATCHED AGAINST YOUR BOX */}
-      {showCuratedSection && (
+      {showCuratedSection && synthesized && (
         <section className="space-y-4">
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div>
@@ -540,7 +848,7 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                 Curated Meta Templates Matched to Your Inventory
               </h2>
               <p className="text-xs text-[#98A2B3]">
-                Ranked by equipment ownership, Material Box craftability, and decoration availability. Each build is also previewed with your best synced talisman and owned decorations.
+                Ranked by equipment ownership and decoration availability. The adapted build uses a talisman and decorations from your box.
               </p>
             </div>
             <span className="font-mono-tabular text-xs text-[#98A2B3]">
@@ -594,6 +902,12 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                           <h3 className="mt-1 font-display text-lg font-semibold text-[#ECEFF4]">
                             {template.title}
                           </h3>
+                          {!match.rankEligible && (
+                            <p className="mt-1 text-xs text-amber-400">
+                              Template requires MR {template.minMr}
+                              {template.minAr > 0 ? ` / AR ${template.minAr}` : ''}
+                            </p>
+                          )}
                         </div>
 
                         <div className="text-right font-mono-tabular shrink-0">
@@ -623,6 +937,10 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                           <span className="text-amber-400">(Not in Box)</span>
                         )}
                       </p>
+                      <WeaponSetup weapon={match.adaptedWeapon} skills={match.adaptedStats.skills} />
+                      {!match.weaponOwnedInBox && template.weaponClass === 'Gunlance' && (
+                        <p className="mt-1 text-xs text-amber-400">No owned Gunlance matches this shelling type.</p>
+                      )}
 
                       {coreSkills.length > 0 && (
                         <p className="mt-1 text-[11px] text-[#98A2B3]">
@@ -639,17 +957,17 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                           </span>
                         </div>
                         <div>
-                          <span className="block text-[11px] text-[#667085]">Owned Decos</span>
+                          <span className="block text-[11px] text-[#667085]">Template Decos Owned</span>
                           <span className="font-mono-tabular font-medium text-[#ECEFF4]">
                             {match.ownedDecoCount}/{match.totalDecoCount} ({match.decoOwnershipPercent}%)
                           </span>
                         </div>
                         <div>
                           <span className="block text-[11px] text-[#667085]">
-                            Affinity / Elem
+                            Weakspot Affinity / Elem
                           </span>
                           <span className="font-mono-tabular font-medium text-[#ECEFF4]">
-                            {adaptedStats.totalAffinity}% ·{' '}
+                            {adaptedStats.weakspotAffinity}% ·{' '}
                             {adaptedStats.effectiveElement > 0
                               ? `${adaptedStats.effectiveElement.toFixed(0)} EFE`
                               : 'Raw'}
@@ -657,6 +975,8 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                         </div>
                       </div>
 
+                      <PrioritySkillLevels skills={match.prioritySkills} />
+                      <ComfortSkills skills={match.comfortHighlights} />
                       <div className="mt-3 space-y-1 text-xs text-[#98A2B3]">
                         <div>
                           <span className="text-[#667085]">Matched Charm: </span>
@@ -679,7 +999,7 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
 
                         {match.missingDecoNames.length > 0 && (
                           <div>
-                            <span className="font-medium text-[#ECEFF4]">Missing Decos: </span>
+                            <span className="font-medium text-[#ECEFF4]">Missing Template Decos: </span>
                             <span>{match.missingDecoNames.slice(0, 4).join(', ')}</span>
                             {match.missingDecoNames.length > 4 && (
                               <span> +{match.missingDecoNames.length - 4} more</span>
@@ -687,22 +1007,6 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                           </div>
                         )}
 
-                        {match.missingGearNames.length > 0 &&
-                          (match.craftableWithMaterials ? (
-                            <div className="font-medium text-emerald-400">
-                              All forging materials for missing pieces are stocked in your Material Box.
-                            </div>
-                          ) : (
-                            <div>
-                              <span className="font-medium text-[#ECEFF4]">To Farm: </span>
-                              <span className="font-mono-tabular">
-                                {match.missingMaterials
-                                  .slice(0, 3)
-                                  .map((m) => `${m.shortfall}x ${m.name}`)
-                                  .join(', ')}
-                              </span>
-                            </div>
-                          ))}
                       </div>
                     </div>
 
@@ -720,7 +1024,7 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                           }
                           className="rounded-lg border border-white/15 bg-[#0B0D10] px-3 py-1.5 text-xs font-medium text-[#ECEFF4] hover:border-[#D4A853] transition-colors whitespace-nowrap"
                         >
-                          Load Original
+                          Load Template
                         </button>
                         <button
                           type="button"
@@ -731,7 +1035,8 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                               updatedAt: new Date().toISOString(),
                             })
                           }
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-[#D4A853] px-3.5 py-1.5 text-xs font-semibold text-[#0B0D10] hover:bg-[#E1BA6B] transition-colors whitespace-nowrap"
+                          disabled={!match.weaponOwnedInBox && template.weaponClass === 'Gunlance'}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-[#D4A853] px-3.5 py-1.5 text-xs font-semibold text-[#0B0D10] hover:bg-[#E1BA6B] transition-colors whitespace-nowrap disabled:opacity-50"
                         >
                           <span>Load w/ Your Box</span>
                           <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />

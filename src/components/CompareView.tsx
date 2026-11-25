@@ -9,26 +9,38 @@ import {
 } from '../data/sunbreakDb';
 import {
   calculateBuildStats,
+  calculateBuildCraftingSummary,
   DEFAULT_SIM_CONFIG,
   simulateTrainingDps,
+  resolveMechanicsWeapon,
+  resolveRecommendationInventory,
 } from '../engine/damageCalculator';
-import { BuildLoadout } from '../types/sunbreak';
+import { estimateGunlanceFullBurst } from '../data/weaponMechanics';
+import { createCraftingPlanner, summarizeCraftingForecast } from '../engine/craftingPlanner';
+import { BuildLoadout, InventoryState } from '../types/sunbreak';
 
 interface CompareViewProps {
   activeBuild: BuildLoadout;
   savedBuilds: BuildLoadout[];
+  comparisonBuild?: BuildLoadout;
+  inventory: InventoryState;
+  masterRank: number;
   onLoadIntoBuilder: (build: BuildLoadout) => void;
 }
 
 export const CompareView: React.FC<CompareViewProps> = ({
   activeBuild,
   savedBuilds,
+  comparisonBuild,
+  inventory,
+  masterRank,
   onLoadIntoBuilder,
 }) => {
   const candidatePool = useMemo(() => {
     const map = new Map<string, BuildLoadout>();
-    map.set(activeBuild.id, activeBuild);
     for (const b of savedBuilds) map.set(b.id, b);
+    map.set(activeBuild.id, activeBuild);
+    if (comparisonBuild) map.set(comparisonBuild.id, comparisonBuild);
     for (const t of META_BUILD_TEMPLATES) {
       if (!map.has(t.id)) {
         map.set(t.id, {
@@ -39,11 +51,12 @@ export const CompareView: React.FC<CompareViewProps> = ({
       }
     }
     return Array.from(map.values());
-  }, [activeBuild, savedBuilds]);
+  }, [activeBuild, savedBuilds, comparisonBuild]);
 
   const [selectedIds, setSelectedIds] = useState<string[]>(() => {
     const defaults = [activeBuild.id];
-    const second = candidatePool.find((b) => b.id !== activeBuild.id);
+    const second = comparisonBuild?.id !== activeBuild.id && comparisonBuild
+      ? comparisonBuild : candidatePool.find((b) => b.id !== activeBuild.id);
     if (second) defaults.push(second.id);
     return defaults;
   });
@@ -65,6 +78,7 @@ export const CompareView: React.FC<CompareViewProps> = ({
   };
 
   const evaluated = useMemo(() => {
+    const planner = createCraftingPlanner(resolveRecommendationInventory(inventory), masterRank);
     return selectedIds
       .map((id) => candidatePool.find((b) => b.id === id))
       .filter((b): b is BuildLoadout => Boolean(b))
@@ -80,15 +94,19 @@ export const CompareView: React.FC<CompareViewProps> = ({
           partName: monster.hitzones[0].partName,
           comboId: combo.id,
         });
-        return { build, stats, weapon, sim };
+        const fullBurst = weapon && estimateGunlanceFullBurst(resolveMechanicsWeapon(weapon), stats, 0, 1);
+        const missing = calculateBuildCraftingSummary(build, inventory).pieceBreakdowns;
+        const crafting = summarizeCraftingForecast(planner, missing);
+        return { build, stats, weapon, sim, fullBurst, crafting };
       });
-  }, [selectedIds, candidatePool, monster]);
+  }, [selectedIds, candidatePool, monster, inventory, masterRank]);
 
   const baseline = evaluated[0];
   const bestDpsId = useMemo(() => {
-    if (evaluated.length === 0) return '';
-    return evaluated.reduce((best, cur) =>
-      cur.sim.dps > best.sim.dps ? cur : best
+    const timed = evaluated.filter(item => item.sim.dps !== undefined);
+    if (timed.length < 2) return '';
+    return timed.reduce((best, cur) =>
+      (cur.sim.dps ?? -Infinity) > (best.sim.dps ?? -Infinity) ? cur : best
     ).build.id;
   }, [evaluated]);
 
@@ -214,11 +232,18 @@ export const CompareView: React.FC<CompareViewProps> = ({
             <MetricRow
               label={`Simulated DPS (${monster.name})`}
               values={evaluated.map((e) => e.sim.dps)}
-              baselineVal={baseline?.sim.dps ?? 0}
+              baselineVal={baseline?.sim.dps}
               unit=" DPS"
               decimals={1}
               highlight
             />
+            {evaluated.some(item => item.sim.isBowgunMagazine) && (
+              <MetricRow label="Damage per Magazine"
+                values={evaluated.map(item => item.sim.isBowgunMagazine ? item.sim.comboDamage : undefined)}
+                baselineVal={baseline?.sim.isBowgunMagazine ? baseline.sim.comboDamage : undefined}
+                decimals={0}
+              />
+            )}
             <MetricRow
               label="Effective Raw (EFR)"
               values={evaluated.map((e) => e.stats.effectiveRaw)}
@@ -231,6 +256,27 @@ export const CompareView: React.FC<CompareViewProps> = ({
               baselineVal={baseline?.stats.effectiveElement ?? 0}
               decimals={1}
             />
+            {evaluated.some(e => e.fullBurst) && (
+              <tr>
+                <td className="px-5 py-3 text-[#98A2B3]">Full Burst (fixed damage)</td>
+                {evaluated.map(e => {
+                  const delta = e.fullBurst && baseline?.fullBurst
+                    ? e.fullBurst.fixedDamage - baseline.fullBurst.fixedDamage : 0;
+                  return <td key={e.build.id} className="px-5 py-3 text-[#ECEFF4]">
+                    {e.fullBurst ? `${e.fullBurst.fixedDamage} · ${e.fullBurst.shellCount} shells` : '—'}
+                    {delta !== 0 && <span className={delta > 0 ? 'ml-2 text-emerald-400' : 'ml-2 text-red-400'}>
+                      {delta > 0 ? '+' : ''}{delta}
+                    </span>}
+                  </td>;
+                })}
+              </tr>
+            )}
+            <tr>
+              <td className="px-5 py-3 text-[#98A2B3]">Crafting cost from your box</td>
+              {evaluated.map(e => <td key={e.build.id} className="px-5 py-3 text-[#ECEFF4]">
+                {e.crafting.zenny.toLocaleString('en-US')} zenny{e.crafting.incompleteCost && ' (known cost)'}
+              </td>)}
+            </tr>
             <MetricRow
               label="True Raw Attack"
               values={evaluated.map((e) => e.stats.trueRaw)}
@@ -239,8 +285,8 @@ export const CompareView: React.FC<CompareViewProps> = ({
             />
             <MetricRow
               label="Weakspot Affinity"
-              values={evaluated.map((e) => e.stats.totalAffinity)}
-              baselineVal={baseline?.stats.totalAffinity ?? 0}
+              values={evaluated.map((e) => e.stats.weakspotAffinity)}
+              baselineVal={baseline?.stats.weakspotAffinity ?? 0}
               unit="%"
               decimals={0}
             />
@@ -318,8 +364,8 @@ export const CompareView: React.FC<CompareViewProps> = ({
 
 const MetricRow: React.FC<{
   label: string;
-  values: number[];
-  baselineVal: number;
+  values: Array<number | undefined>;
+  baselineVal: number | undefined;
   unit?: string;
   decimals?: number;
   highlight?: boolean;
@@ -328,7 +374,7 @@ const MetricRow: React.FC<{
     <tr className="hover:bg-white/[0.02]">
       <td className="px-5 py-3 text-xs font-medium text-[#98A2B3]">{label}</td>
       {values.map((val, idx) => {
-        const delta = val - baselineVal;
+        const delta = val === undefined || baselineVal === undefined ? undefined : val - baselineVal;
         return (
           <td key={idx} className="px-5 py-3 font-mono-tabular">
             <span
@@ -336,10 +382,9 @@ const MetricRow: React.FC<{
                 highlight ? 'text-base text-[#D4A853]' : 'text-sm text-[#ECEFF4]'
               }`}
             >
-              {val.toFixed(decimals)}
-              {unit}
+              {val === undefined ? '—' : `${val.toFixed(decimals)}${unit}`}
             </span>
-            {idx > 0 && Math.abs(delta) > 0.05 && (
+            {idx > 0 && delta !== undefined && Math.abs(delta) > 0.05 && (
               <span
                 className={`ml-2 text-xs ${
                   delta > 0 ? 'text-emerald-400' : 'text-red-400'
