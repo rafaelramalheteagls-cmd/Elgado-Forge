@@ -27,6 +27,7 @@ interface CompareViewProps {
   comparisonBuild?: BuildLoadout;
   inventory: InventoryState;
   masterRank: number;
+  researchLevel: number;
   onLoadIntoBuilder: (build: BuildLoadout) => void;
 }
 
@@ -36,6 +37,7 @@ export const CompareView: React.FC<CompareViewProps> = ({
   comparisonBuild,
   inventory,
   masterRank,
+  researchLevel,
   onLoadIntoBuilder,
 }) => {
   const candidatePool = useMemo(() => {
@@ -83,7 +85,7 @@ export const CompareView: React.FC<CompareViewProps> = ({
   };
 
   const evaluated = useMemo(() => {
-    const planner = createCraftingPlanner(resolveRecommendationInventory(inventory), masterRank);
+    const planner = createCraftingPlanner(resolveRecommendationInventory(inventory), masterRank, researchLevel);
     return selectedIds
       .map((id) => candidatePool.find((b) => b.id === id))
       .filter((b): b is BuildLoadout => Boolean(b))
@@ -104,7 +106,7 @@ export const CompareView: React.FC<CompareViewProps> = ({
         const crafting = summarizeCraftingForecast(planner, missing);
         return { build, stats, weapon, sim, fullBurst, crafting };
       });
-  }, [selectedIds, candidatePool, monster, inventory, masterRank]);
+  }, [selectedIds, candidatePool, monster, inventory, masterRank, researchLevel]);
 
   const baseline = evaluated[0];
   const bestDpsId = useMemo(() => {

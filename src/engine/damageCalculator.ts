@@ -13,6 +13,7 @@ import {
   WEAPONS_DB,
 } from '../data/sunbreakDb';
 import { AFFINITY_SKILL_EFFECTS, getEquipmentProgression } from '../data/mhriceAdapter';
+import { EMPTY_Q_WEAPON } from '../data/quriousDefaults';
 import { elementExploitMultiplier, estimateChargeBladeSaedPhials, estimateGunlanceFullBurst, getBowgunMagazineCycleSeconds, getBowShotProfile, getPrimaryBowgunAmmo, getRecommendedShot, sneakAttackMultiplier, supportsOffensiveGuard } from '../data/weaponMechanics';
 import {
   ArmorItem,
@@ -79,6 +80,7 @@ export const DEFAULT_SIM_CONFIG: SimulationConfig = {
   derelictionQurio: 3,
   frostcraftGauge: 3,
   burstActive: true,
+  bloodAwakeningHealing: 0,
   coalescenceActive: true,
   powercharmTalon: true,
   dangoBooster: true,
@@ -88,6 +90,20 @@ export function resolveWeaponSlots(loadout: BuildLoadout): [number, number, numb
   const weapon = getWeaponById(loadout.weaponId);
   if (!weapon) return [0, 0, 0];
   return [...weapon.slots];
+}
+
+export function replaceBuildWeapon(loadout: BuildLoadout, weapon: WeaponItem): BuildLoadout {
+  if (loadout.weaponId === weapon.id) return loadout;
+  return {
+    ...loadout,
+    weaponClass: weapon.weaponClass,
+    weaponId: weapon.id,
+    bowgunAmmo: undefined,
+    quriousWeapon: { ...EMPTY_Q_WEAPON },
+    rampageDecoId: rampageDecorationFits(loadout.rampageDecoId, weapon) ? loadout.rampageDecoId : '',
+    decorations: { ...loadout.decorations, weapon: ['', '', ''] },
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 export function resolveArmorSlots(
@@ -582,14 +598,23 @@ export function calculateBuildStats(
     activeEndgameEffects.push(`Burst Lv${burst} (+${bAtk} Raw / +${burstElemFlat} Elem)`);
   }
 
-  // Blood Awakening
+  // Active healing tiers measured in Sunbreak TU6, split by weapon damage type.
+  // https://www.youtube.com/watch?v=Zb_fgLl2TPo
+  // https://www.reddit.com/r/MonsterHunterMeta/comments/1447fez/
   const ba = skills['blood_awakening'] ?? 0;
   let baElemFlat = 0;
-  if (ba > 0) {
-    const baAtk = [0, 20, 30, 40][ba] ?? 0;
-    baElemFlat = [0, 15, 20, 30][ba] ?? 0;
+  const healed = cfg.bloodAwakeningHealing;
+  if (ba > 0 && (healed === 50 || healed === 150)) {
+    const lowTier = weapon.damageType === 'Shot'
+      ? [[4, 4], [4, 4], [10, 8]]
+      : [[5, 5], [5, 5], [15, 15]];
+    const highTier = weapon.damageType === 'Shot'
+      ? [[8, 8], [15, 10], [25, 15]]
+      : [[10, 10], [20, 20], [40, 30]];
+    const [baAtk, baElem] = (healed === 150 ? highTier : lowTier)[ba - 1] ?? [0, 0];
+    baElemFlat = baElem;
     flatRawBonus += baAtk;
-    activeEndgameEffects.push(`Blood Awakening Lv${ba} (+${baAtk} Raw / +${baElemFlat} Elem)`);
+    activeEndgameEffects.push(`Blood Awakening Lv${ba} · ${healed} HP healed (+${baAtk} Raw / +${baElemFlat} Elem)`);
   }
 
   // Frostcraft

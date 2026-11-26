@@ -37,6 +37,7 @@ self.onmessage = ({ data }: MessageEvent<OwnedBuildRequest>) => {
       preference,
       allowHealthDrain,
       craftingMr: craftableNow ? profile.mr : undefined,
+      craftingAr: profile.ar,
       constraints,
     }),
     matches: evaluateOwnedBuildMatches(profile, inventory, { weaponFilter, preference }),
@@ -51,6 +52,7 @@ self.onmessage = ({ data }: MessageEvent<OwnedBuildRequest>) => {
         preference: objective === 'comfort' ? 'comfort' : 'balanced',
         allowHealthDrain,
         craftingMr: craftableNow ? profile.mr : undefined,
+        craftingAr: profile.ar,
         constraints: { ...constraints, weaponId: objectiveWeaponId },
       }).builds[0],
     }));

@@ -41,6 +41,7 @@ import {
   QuriousArmorAugment,
   TalismanItem,
   WeaponClass,
+  WeaponItem,
 } from '../types/sunbreak';
 import { DrawerTarget } from './EquipmentDrawer';
 import { SharpnessBar } from './SharpnessBar';
@@ -54,6 +55,7 @@ interface BuilderWorkspaceProps {
   inventory: InventoryState;
   onUpdateLoadout: (next: BuildLoadout) => void;
   onUpdateInventory: React.Dispatch<React.SetStateAction<InventoryState>>;
+  onSelectWeapon: (weapon: WeaponItem) => void;
   onSaveBuild: () => void;
   onToggleFavorite: (buildId: string) => void;
   onSelectSavedBuild: (build: BuildLoadout) => void;
@@ -82,6 +84,7 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
   inventory,
   onUpdateLoadout,
   onUpdateInventory,
+  onSelectWeapon,
   onSaveBuild,
   onToggleFavorite,
   onSelectSavedBuild,
@@ -93,7 +96,7 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
   const [showCharmEditor, setShowCharmEditor] = useState(false);
   const [savedFilter, setSavedFilter] = useState<'all' | 'favorites'>('all');
   const [craftConfirmation, setCraftConfirmation] = useState<{
-    itemId: string; inventory: InventoryState; build: BuildLoadout; masterRank: number;
+    itemId: string; inventory: InventoryState; build: BuildLoadout; masterRank: number; researchLevel: number;
   }>();
   const [farmReachableOnly, setFarmReachableOnly] = useState(false);
   const [armorPlan, setArmorPlan] = useState<{ base: BuildLoadout; slot: ArmorSlot; augment: QuriousArmorAugment }>();
@@ -116,7 +119,10 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
     [loadout, inventory]
   );
   const craftingInventory = useMemo(() => resolveRecommendationInventory(inventory), [inventory]);
-  const craftPlanner = useMemo(() => createCraftingPlanner(craftingInventory, masterRank), [craftingInventory, masterRank]);
+  const craftPlanner = useMemo(
+    () => createCraftingPlanner(craftingInventory, masterRank, researchLevel),
+    [craftingInventory, masterRank, researchLevel],
+  );
   const craftPlan = useMemo(() => craftPlanner.plan(crafting.pieceBreakdowns), [craftPlanner, crafting]);
   const forecast = useMemo(() => summarizeCraftingForecast(craftPlanner, crafting.pieceBreakdowns), [craftPlanner, crafting]);
   const weapon = getWeaponById(loadout.weaponId) ?? WEAPONS_DB[0];
@@ -135,17 +141,7 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
       (a, b) => b.raw - a.raw
     );
     const firstMatch = classWeapons[0] ?? WEAPONS_DB[0];
-    onUpdateLoadout({
-      ...loadout,
-      weaponClass: nextClass,
-      weaponId: firstMatch.id,
-      bowgunAmmo: undefined,
-      decorations: {
-        ...loadout.decorations,
-        weapon: ['', '', ''],
-      },
-      updatedAt: new Date().toISOString(),
-    });
+    onSelectWeapon(firstMatch);
   };
 
   const handleSelectPresetTalisman = (tali: TalismanItem) => {
@@ -1064,7 +1060,7 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                   const unlock = getEquipmentCraftingUnlock(p.itemId);
                   const isConfirming = craftConfirmation?.itemId === p.itemId
                     && craftConfirmation.inventory === inventory && craftConfirmation.build === loadout
-                    && craftConfirmation.masterRank === masterRank;
+                    && craftConfirmation.masterRank === masterRank && craftConfirmation.researchLevel === researchLevel;
                   const handleConfirmCrafting = () => {
                     if (!craftStep) return;
                     setCraftConfirmation(undefined);
@@ -1118,6 +1114,12 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                           <span className="block text-emerald-400">
                             Craftable Now · {route.length > 1 ? `${route.length}-step route` : craftStep.recipe.label ?? 'Forge'}
                           </span>
+                        )}
+                        {!craftStep && craftPlanner.progression(p.itemId, kind) === 'locked' && (
+                          <span className="block text-amber-400">Locked at your current progression</span>
+                        )}
+                        {craftStep && route.some(step => craftPlanner.progression(step.itemId, kind) === 'unverified') && (
+                          <span className="block text-amber-400">Check recipe unlock conditions at the Smithy.</span>
                         )}
                         {craftStep?.recipe.category && route.length === 1 && (
                           <span className="block text-[#98A2B3]">
@@ -1189,7 +1191,7 @@ export const BuilderWorkspace: React.FC<BuilderWorkspaceProps> = ({
                         ) : (
                           <>
                             {craftStep && (
-                              <button type="button" onClick={() => setCraftConfirmation({ itemId: p.itemId, inventory, build: loadout, masterRank })}
+                              <button type="button" onClick={() => setCraftConfirmation({ itemId: p.itemId, inventory, build: loadout, masterRank, researchLevel })}
                                 className="block ml-auto rounded border border-[#D4A853]/50 px-2.5 py-1 text-[11px] text-[#D4A853]">
                                 Record Crafting
                               </button>

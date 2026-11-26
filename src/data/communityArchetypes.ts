@@ -6,6 +6,11 @@ export const SUNBREAK_SOLO_PROGRESSION = 'https://mhsbsets.wordpress.com/endgame
 const BOWGUN_GUIDE = 'https://www.reddit.com/r/MonsterHunterMeta/comments/1447fez/';
 const BOW_GUIDE = 'https://steamcommunity.com/sharedfiles/filedetails/?id=2816420719';
 const HAMMER_GUIDE = 'https://mhsbsets.wordpress.com/hammer/';
+const HEAVEN_SENT_SKILL = 'https://mhrise.kiranico.com/data/skills/932080356';
+
+export const HEAVEN_SENT_3_CLASSES: readonly WeaponClass[] = [
+  'Gunlance', 'Insect Glaive', 'Switch Axe', 'Dual Blades', 'Bow',
+];
 
 interface CommunityArchetype {
   id: string;
@@ -15,6 +20,7 @@ interface CommunityArchetype {
   bowgunPierceLevel?: 2 | 3;
   bowShotSkill?: 'normal_rapid_up' | 'spread_up' | 'pierce_up';
   elementRequired?: boolean;
+  requiresHeavenSent3?: boolean;
   priorities: Record<string, number>;
   comfort: readonly string[];
   source: string;
@@ -22,6 +28,16 @@ interface CommunityArchetype {
 }
 
 export const COMMUNITY_ARCHETYPES: readonly CommunityArchetype[] = [
+  ...HEAVEN_SENT_3_CLASSES.map(weaponClass => ({
+    id: `heaven-sent-3-${weaponClass.toLowerCase().replaceAll(' ', '-')}`,
+    name: `${weaponClass} · Heaven-Sent 3`,
+    weaponClass,
+    requiresHeavenSent3: true,
+    priorities: { heaven_sent: 3 },
+    comfort: [],
+    source: HEAVEN_SENT_SKILL,
+    note: 'Requires Heaven-Sent Lv 3 from Tempest Robe, Sleeves, and Hakama. While active, the skill prevents sharpness and stamina consumption.',
+  })),
   {
     id: 'rf-pierce-2', name: 'Light Bowgun · Rapid Fire Pierce 2', weaponClass: 'Light Bowgun',
     bowgunPierceLevel: 2,

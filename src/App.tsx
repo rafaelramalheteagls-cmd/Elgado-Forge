@@ -7,8 +7,8 @@ import { OwnedRecommendationsView } from './components/OwnedRecommendationsView'
 import { TopBar, WorkspaceTab } from './components/TopBar';
 import { TrainingSimulatorView } from './components/TrainingSimulatorView';
 import { getWeaponById } from './data/sunbreakDb';
-import { EMPTY_ARMOR_AUGMENT, EMPTY_Q_WEAPON } from './data/quriousDefaults';
-import { rampageDecorationFits } from './engine/damageCalculator';
+import { EMPTY_ARMOR_AUGMENT } from './data/quriousDefaults';
+import { rampageDecorationFits, replaceBuildWeapon } from './engine/damageCalculator';
 import {
   ArmorItem,
   BuildLoadout,
@@ -150,19 +150,7 @@ export default function App() {
   };
 
   const handleSelectWeapon = (weapon: WeaponItem) => {
-    setActiveBuild((prev) => prev.weaponId === weapon.id ? prev : ({
-      ...prev,
-      weaponClass: weapon.weaponClass,
-      weaponId: weapon.id,
-      bowgunAmmo: undefined,
-      quriousWeapon: { ...EMPTY_Q_WEAPON },
-      rampageDecoId: rampageDecorationFits(prev.rampageDecoId, weapon) ? prev.rampageDecoId : '',
-      decorations: {
-        ...prev.decorations,
-        weapon: ['', '', ''],
-      },
-      updatedAt: new Date().toISOString(),
-    }));
+    setActiveBuild(prev => replaceBuildWeapon(prev, weapon));
     setDrawerTarget(null);
   };
 
@@ -261,6 +249,7 @@ export default function App() {
             inventory={inventory}
             onUpdateLoadout={setActiveBuild}
             onUpdateInventory={setInventory}
+            onSelectWeapon={handleSelectWeapon}
             onSaveBuild={handleSaveBuild}
             onToggleFavorite={handleToggleFavorite}
             onSelectSavedBuild={(b) => {
@@ -278,6 +267,7 @@ export default function App() {
             comparisonBuild={comparisonBuild}
             inventory={inventory}
             masterRank={profile.mr}
+            researchLevel={profile.ar}
             savedBuilds={savedBuilds}
             onLoadIntoBuilder={(b) => {
               setActiveBuild(b);

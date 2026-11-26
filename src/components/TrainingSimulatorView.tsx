@@ -28,7 +28,7 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
   loadout,
 }) => {
   const weapon = getWeaponById(loadout.weaponId);
-  const hasDragonConversion = useMemo(() => (aggregateBuildSkills(loadout).skills.dragon_conversion ?? 0) > 0, [loadout]);
+  const { skills } = useMemo(() => aggregateBuildSkills(loadout), [loadout]);
 
   const classCombos = useMemo(() => {
     const exact = WEAPON_COMBOS_DB.filter(
@@ -308,12 +308,30 @@ export const TrainingSimulatorView: React.FC<TrainingSimulatorViewProps> = ({
               Skill Uptime & Buff Assumptions
             </h2>
 
-            {hasDragonConversion && (
+            {skills.dragon_conversion > 0 && (
               <label className="flex items-center gap-2 text-xs text-[#98A2B3]">
                 <input type="checkbox" checked={config.dragonConversionCharged ?? false}
                   onChange={event => setConfig(current => ({ ...current, dragonConversionCharged: event.target.checked }))}
                   className="accent-[#D4A853]" />
                 Dragon Conversion charged on Blue Scroll
+              </label>
+            )}
+
+            {skills.blood_awakening > 0 && (
+              <label className="block text-xs text-[#98A2B3]">
+                Blood Awakening · HP healed via Blood Rite or Bloodblight
+                <select
+                  value={config.bloodAwakeningHealing ?? 0}
+                  onChange={event => setConfig(current => ({
+                    ...current,
+                    bloodAwakeningHealing: Number(event.target.value) as 0 | 50 | 150,
+                  }))}
+                  className="mt-1 block w-full rounded border border-white/15 bg-[#0B0D10] px-2 py-1.5 text-[#ECEFF4]"
+                >
+                  <option value={0}>Inactive</option>
+                  <option value={50}>50 HP · First tier active</option>
+                  <option value={150}>150 HP · Second tier active</option>
+                </select>
               </label>
             )}
 

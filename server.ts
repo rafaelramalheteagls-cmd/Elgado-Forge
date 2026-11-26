@@ -1,8 +1,10 @@
 import 'dotenv/config';
 import express from 'express';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { createServer as createViteServer } from 'vite';
 import {
   ARMOR_DB,
@@ -12,12 +14,41 @@ import {
   WEAPONS_DB,
 } from './src/data/sunbreakDb.ts';
 import { getUnlockedIdsForRank } from './src/engine/damageCalculator.ts';
+import { validateCatalogs } from './src/data/catalogValidation.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const MHR_APP_ID = 1446780;
-let lastDatabaseSyncAt = new Date().toISOString();
+let lastDatabaseSyncAt: string | null = null;
+let catalogVerification: Promise<void> | undefined;
+const runFile = promisify(execFile);
+
+function catalogSummary() {
+  return {
+    ok: true,
+    version: 'Sunbreak TU6 (Ver.16)',
+    lastSyncedAt: lastDatabaseSyncAt,
+    counts: {
+      weapons: WEAPONS_DB.length,
+      armor: ARMOR_DB.length,
+      skills: SKILLS_DB.length,
+      decorations: DECORATIONS_DB.length,
+      monsters: MONSTERS_DB.length,
+    },
+  };
+}
+
+async function verifyCatalog() {
+  await runFile(process.execPath, ['scripts/run-data.mjs', 'validate'], {
+    cwd: __dirname,
+    timeout: 30_000,
+    windowsHide: true,
+  });
+  const errors = validateCatalogs().filter(issue => issue.severity === 'error');
+  if (errors.length) throw new Error(errors.map(issue => `${issue.id}: ${issue.message}`).join('\n'));
+  lastDatabaseSyncAt = new Date().toISOString();
+}
 
 function extractXmlTag(xml: string, tag: string): string {
   const cdataRe = new RegExp(`<${tag}><!\\[CDATA\\[([\\s\\S]*?)\\]\\]></${tag}>`, 'i');
@@ -344,6 +375,23 @@ async function syncViaSteamCommunityXml(target: {
 
 async function startServer() {
   const app = express();
+  app.use((req, res, next) => {
+    let requestPath: string;
+    try {
+      requestPath = decodeURIComponent(req.path);
+    } catch {
+      res.sendStatus(400);
+      return;
+    }
+    const segments = requestPath.toLowerCase().split(/[/\\]+/);
+    if (segments.includes('.local-inventory') || segments.some(segment =>
+      /^elgado_forge_export.*\.json$|^elgado-forge-(inventory|builds)\.json$|^elgado-forge-materials\.csv$/.test(segment)
+    )) {
+      res.sendStatus(404);
+      return;
+    }
+    next();
+  });
   app.use(express.json({ limit: '1mb' }));
 
   // Health
@@ -353,18 +401,7 @@ async function startServer() {
 
   // Official Curated Sunbreak Database Catalog API
   app.get('/api/database/catalog', (_req, res) => {
-    res.json({
-      ok: true,
-      version: 'Sunbreak TU6 (Ver.16)',
-      lastSyncedAt: lastDatabaseSyncAt,
-      counts: {
-        weapons: WEAPONS_DB.length,
-        armor: ARMOR_DB.length,
-        skills: SKILLS_DB.length,
-        decorations: DECORATIONS_DB.length,
-        monsters: MONSTERS_DB.length,
-      },
-    });
+    res.json(catalogSummary());
   });
 
   app.get('/api/database/search', (req, res) => {
@@ -446,20 +483,20 @@ async function startServer() {
     return res.status(400).json({ ok: false, error: 'Unsupported database type.' });
   });
 
-  app.post('/api/database/sync', (_req, res) => {
-    lastDatabaseSyncAt = new Date().toISOString();
-    res.json({
-      ok: true,
-      version: 'Sunbreak TU6 (Ver.16)',
-      lastSyncedAt: lastDatabaseSyncAt,
-      counts: {
-        weapons: WEAPONS_DB.length,
-        armor: ARMOR_DB.length,
-        skills: SKILLS_DB.length,
-        decorations: DECORATIONS_DB.length,
-        monsters: MONSTERS_DB.length,
-      },
+  app.post('/api/database/sync', async (_req, res) => {
+    catalogVerification ??= verifyCatalog().finally(() => {
+      catalogVerification = undefined;
     });
+    try {
+      await catalogVerification;
+      res.json(catalogSummary());
+    } catch (error) {
+      console.error('MHRice catalog verification failed:', error);
+      const message = error instanceof Error && error.message.includes('Python 3 is required')
+        ? 'Python 3 is required to verify the MHRice catalogs.'
+        : 'Catalog verification failed. See the server log for details.';
+      res.status(500).json({ ok: false, error: message });
+    }
   });
 
   // Steam Progression & Achievement Sync (AppID 1446780)

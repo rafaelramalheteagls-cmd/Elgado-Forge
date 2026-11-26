@@ -1,6 +1,6 @@
 import { EMPTY_ARMOR_AUGMENT, EMPTY_Q_WEAPON } from '../data/quriousDefaults';
 import { craftingRoute, createCraftingPlanner } from './craftingPlanner';
-import { COMMUNITY_ARCHETYPES } from '../data/communityArchetypes';
+import { COMMUNITY_ARCHETYPES, HEAVEN_SENT_3_CLASSES } from '../data/communityArchetypes';
 import { getEquipmentCraftingZenny } from '../data/mhriceAdapter';
 import {
   ARMOR_DB,
@@ -160,6 +160,11 @@ const TRUE_ELEMENTS = new Set(['Fire', 'Water', 'Thunder', 'Ice', 'Dragon']);
 const STATUS_ELEMENTS = new Set(['Poison', 'Paralysis', 'Sleep', 'Blast']);
 const HEALTH_DRAIN_SKILLS = ['berserk', 'bloodlust', 'dereliction'];
 
+function heavenSentBreakpoint(weapon: WeaponItem, skills: Record<string, number>, preference: BuildPreference): number {
+  if ((skills.heaven_sent ?? 0) < 3 || !HEAVEN_SENT_3_CLASSES.includes(weapon.weaponClass)) return 0;
+  return preference === 'comfort' ? 300 : 240;
+}
+
 function hasHealthDrain(skills: Record<string, number>): boolean {
   return HEALTH_DRAIN_SKILLS.some((id) => (skills[id] ?? 0) > 0);
 }
@@ -274,6 +279,7 @@ export function getSkillWeightsForWeapon(weapon: WeaponItem, style?: GlaiveStyle
       weights.grinder_s = 7;
     }
   }
+  if (isBow) weights.heaven_sent = 15;
 
   // Elemental Attack & Boosters (STRICTLY matching weapon.elementType!)
   const elemSkill = matchingElementSkill(weapon);
@@ -516,11 +522,13 @@ function refineWeightsForContext(
   const hasBloodRite = totalOf('blood_rite') > 0;
   const hasDragonConversion = totalOf('dragon_conversion') > 0;
   const hasInfiniteStamina = hasBerserk && totalOf('strife') >= 3;
+  const hasHeavenSent3 = totalOf('heaven_sent') >= 3;
   const enablesCoalescence = hasBloodlust || hasHellfire;
   const convertsResistances = hasDragonConversion && !hasBerserk && TRUE_ELEMENTS.has(weapon.elementType);
   // The caller scopes the cache to a single weapon and preference.
   const key = Number(hasRedHealth) | (Number(hasBerserk) << 1) | (Number(hasInfiniteStamina) << 2)
-    | (Number(enablesCoalescence) << 3) | (Number(hasBloodRite) << 4) | (Number(convertsResistances) << 5);
+    | (Number(enablesCoalescence) << 3) | (Number(hasBloodRite) << 4) | (Number(convertsResistances) << 5)
+    | (Number(hasHeavenSent3) << 6);
   const cached = cache?.get(key);
   if (cached) return cached;
   const w = { ...baseWeights };
@@ -540,6 +548,14 @@ function refineWeightsForContext(
     if (hasInfiniteStamina) {
       w.constitution = Math.min(w.constitution ?? 0, 8);
       w.stamina_surge = Math.min(w.stamina_surge ?? 0, 8);
+    }
+  }
+
+  if (hasHeavenSent3) {
+    // These skills can still help while Heaven-Sent is inactive.
+    for (const id of ['speed_sharpening', 'masters_touch', 'razor_sharp', 'protective_polish', 'bladescale_hone',
+      'constitution', 'stamina_surge', 'marathon_runner']) {
+      if (w[id]) w[id] *= 0.2;
     }
   }
 
@@ -625,7 +641,7 @@ function pickTalismanForArmorSearch(
 
 /**
  * Greedily fills weapon, 5 armor pieces, and talisman slots using ONLY strictly relevant,
- * allowed decorations, respecting exact slot levels, owned decoration quantities, and max skill caps.
+ * allowed decorations, respecting minimum slot levels, owned decoration quantities, and max skill caps.
  */
 interface DecoSearchOptions {
   damageObjective?: boolean;
@@ -1242,6 +1258,7 @@ function optimizeLoadoutTalisman(
     priorityTarget: targetLevels.get(deco.skillId) ?? 0,
     preferredBonus: preferredDecos.has(deco.id) ? 1.12 : 1,
   }));
+  // Slot level is capacity: a level 4 slot can take level 2 and 3 jewels.
   const bySlot = Array.from({ length: 5 }, (_, level) => decoCandidates.filter(({ deco }) => deco.slotLevel <= level));
   const decorationSearch = {
     bySlot,
@@ -1274,7 +1291,8 @@ function optimizeLoadoutTalisman(
       loadout,
       stats,
       objectiveDps: training?.dps,
-      score: damageScore ?? (stats.effectiveRaw + stats.effectiveElement * elemFactor + utilityBonus * 0.45 + elementSkillBonus),
+      score: damageScore ?? (stats.effectiveRaw + stats.effectiveElement * elemFactor + utilityBonus * 0.45
+        + elementSkillBonus + heavenSentBreakpoint(weapon, stats.skills, preference)),
       priorityCoverage: prioritySkillCoverage(stats.skills, targets),
     };
     if (isBetterTalismanBuild(candidate, best)) best = candidate;
@@ -1308,6 +1326,7 @@ export function synthesizeOwnedBoxBuilds(
     preference?: BuildPreference;
     allowHealthDrain?: boolean;
     craftingMr?: number;
+    craftingAr?: number;
     constraints?: BuildSearchConstraints;
     objective?: BuildObjective;
   }
@@ -1320,13 +1339,16 @@ export function synthesizeOwnedBoxBuilds(
   inventory = resolveRecommendationInventory(inventory);
   const constraints = options?.constraints;
   const archetype = COMMUNITY_ARCHETYPES.find(profile => profile.id === constraints?.communityArchetypeId);
+  const requiresHeavenSent3 = archetype?.requiresHeavenSent3 === true;
   const locked = constraints?.weaponId ? getWeaponById(constraints.weaponId) : undefined;
   const lockedWeapon = locked && resolveMechanicsWeapon(locked).id;
   const lockedArmorIds = new Set(resolveRecommendationInventory({
     ...inventory, ownedArmorIds: Object.values(constraints?.armor ?? {}).filter(Boolean),
   }).ownedArmorIds);
   const requestedSkills = Object.entries(constraints?.skillTargets ?? {});
-  const planner = options?.craftingMr === undefined ? undefined : createCraftingPlanner(inventory, options.craftingMr);
+  const planner = options?.craftingMr === undefined
+    ? undefined
+    : createCraftingPlanner(inventory, options.craftingMr, options.craftingAr);
   const objective = options?.objective;
   const costOf = (loadout: BuildLoadout) => {
     const pieces = calculateBuildCraftingSummary(loadout, inventory).pieceBreakdowns;
@@ -1479,26 +1501,29 @@ export function synthesizeOwnedBoxBuilds(
     if (element && (archetype?.elementRequired || archetype?.style === 'elemental-phials' || archetype?.style === 'elemental-glaive')) {
       guidedSkills[element] = getSkillById(element)?.maxLevel ?? 5;
     }
-    const profileTargets = Object.entries({ ...guidedSkills, ...constraints?.skillTargets });
+    const profileTargets = Object.entries({ ...guidedSkills, ...constraints?.skillTargets,
+      ...(requiresHeavenSent3 ? { heaven_sent: 3 } : {}),
+    });
     const targetsById = new Map(prioritySkillTargets(weapon, style));
     for (const [id, level] of profileTargets) targetsById.set(id, Math.max(level, targetsById.get(id) ?? 0));
     const targets = [...targetsById];
     const bestTalisman =
       pickTalismanForArmorSearch(eligibleTalismans, weapon, {}, style, preference) ?? EMPTY_RECOMMENDATION_TALISMAN;
 
-    // Rank the best five pieces per slot before comparing complete sets.
-    const topSlotPieces = Object.fromEntries(armorSlots.map((slot) => [
-      slot,
-      armorBySlot[slot]
+    const valuesHeavenSent = HEAVEN_SENT_3_CLASSES.includes(weapon.weaponClass);
+    // Preserve set skill pieces through the per-slot cutoff, even if their standalone score is low.
+    const topSlotPieces = Object.fromEntries(armorSlots.map((slot) => {
+      const ranked = armorBySlot[slot]
         .map((piece) => ({ piece, score: scoreArmorPieceForWeapon(piece, weapon, weights)
           + prioritySkillCoverage(piece.skills, profileTargets) * 1000 }))
         .sort((a, b) => (objective === 'cost'
           ? (ownedArmorSet.has(a.piece.id) ? 0 : getEquipmentCraftingZenny(a.piece.id) ?? Infinity)
             - (ownedArmorSet.has(b.piece.id) ? 0 : getEquipmentCraftingZenny(b.piece.id) ?? Infinity)
-          : 0) || b.score - a.score)
-        .slice(0, 5)
-        .map(({ piece }) => piece),
-    ])) as Record<ArmorSlot, ArmorItem[]>;
+          : 0) || b.score - a.score);
+      return [slot, ranked
+        .filter(({ piece }, index) => index < 5 || (valuesHeavenSent && (piece.skills.heaven_sent ?? 0) > 0))
+        .map(({ piece }) => piece)];
+    })) as Record<ArmorSlot, ArmorItem[]>;
 
     // Evaluate combinations and collect top 6 candidates to verify with full stats & decos
     type ComboCandidate = {
@@ -1506,6 +1531,7 @@ export function synthesizeOwnedBoxBuilds(
       heuristicScore: number;
     };
     const topCombos: ComboCandidate[] = [];
+    const heavenSentCombos: ComboCandidate[] = [];
     const contextCache = new Map<number, Record<string, number>>();
 
     for (const helm of topSlotPieces.Helm) {
@@ -1513,8 +1539,10 @@ export function synthesizeOwnedBoxBuilds(
         for (const arms of topSlotPieces.Arms) {
           for (const waist of topSlotPieces.Waist) {
             for (const legs of topSlotPieces.Legs) {
-              const skillTotals: Record<string, number> = {};
               const pieces = [helm, chest, arms, waist, legs];
+              const armorHeavenSent = valuesHeavenSent && pieces.reduce((sum, piece) => sum + (piece.skills.heaven_sent ?? 0), 0) >= 3;
+              if (requiresHeavenSent3 && !armorHeavenSent) continue;
+              const skillTotals: Record<string, number> = {};
               let slotScore = 0;
 
               for (const p of pieces) {
@@ -1536,7 +1564,7 @@ export function synthesizeOwnedBoxBuilds(
 
               const ctxWeights = refineWeightsForContext(weights, weapon, skillTotals, preference, contextCache);
 
-              let skillScore = 0;
+              let skillScore = heavenSentBreakpoint(weapon, skillTotals, preference);
               for (const [sk, rawPts] of Object.entries(skillTotals)) {
                 const maxLv = usefulSkillCap(weapon, sk);
                 const cappedPts = Math.min(rawPts, maxLv);
@@ -1567,16 +1595,18 @@ export function synthesizeOwnedBoxBuilds(
               const total = objective === 'cost' ? -armorCost * 1e8 + skillScore + slotScore
                 : prioritySkillCoverage(skillTotals, profileTargets) * 10000
                 + prioritySkillCoverage(skillTotals, targets) * 1000 + skillScore + slotScore;
+              // Evaluate complete Heaven-Sent sets with decorations even if armor alone misses class targets.
+              const shortlist = armorHeavenSent ? heavenSentCombos : topCombos;
               if (
-                topCombos.length < 6 ||
-                total > topCombos[topCombos.length - 1].heuristicScore
+                shortlist.length < 6 ||
+                total > shortlist[shortlist.length - 1].heuristicScore
               ) {
-                topCombos.push({
+                shortlist.push({
                   combo: { Helm: helm, Chest: chest, Arms: arms, Waist: waist, Legs: legs },
                   heuristicScore: total,
                 });
-                topCombos.sort((a, b) => b.heuristicScore - a.heuristicScore);
-                if (topCombos.length > 6) topCombos.pop();
+                shortlist.sort((a, b) => b.heuristicScore - a.heuristicScore);
+                if (shortlist.length > 6) shortlist.pop();
               }
             }
           }
@@ -1584,15 +1614,15 @@ export function synthesizeOwnedBoxBuilds(
       }
     }
 
-    if (topCombos.length === 0) continue;
-
     const rampageDecoId = chooseBestRampageDeco(weapon, allowedDecoSet);
     let bestEvaluated: (EvaluatedTalismanBuild & { combo: Record<ArmorSlot, ArmorItem>; craftingCost?: number }) | undefined;
 
-    for (const candidate of topCombos) {
+    for (const candidate of [...topCombos, ...heavenSentCombos]) {
       const base: BuildLoadout = {
-        id: `box_opt_${weapon.id}${style ? `_${style}` : ''}${weapon.selectedBowgunAmmo ? `_${weapon.selectedBowgunAmmo}` : ''}`,
-        name: `${weapon.name} (${style === 'extracts' ? 'Extract Uptime' : style === 'elemental' ? 'Elemental Damage' : 'Box Optimized'})`,
+        id: `box_opt_${weapon.id}${style ? `_${style}` : ''}${weapon.selectedBowgunAmmo ? `_${weapon.selectedBowgunAmmo}` : ''}${requiresHeavenSent3 ? '_heaven_sent_3' : ''}`,
+        name: `${weapon.name} (${[requiresHeavenSent3 ? 'Heaven-Sent 3' : '',
+          style === 'extracts' ? 'Extract Uptime' : style === 'elemental' ? 'Elemental Damage' : '',
+        ].filter(Boolean).join(' · ') || 'Box Optimized'})`,
         weaponClass: weapon.weaponClass,
         weaponId: weapon.id,
         bowgunAmmo: weapon.selectedBowgunAmmo,

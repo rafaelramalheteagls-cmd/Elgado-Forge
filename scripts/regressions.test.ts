@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CRAFTING_CATEGORY_MATERIALS, getEquipmentProgression, getWeaponCraftingOptions } from '../src/data/mhriceAdapter';
-import { EMPTY_Q_ARMOR } from '../src/data/quriousDefaults';
-import { ARMOR_DB, DECORATIONS_DB, META_BUILD_TEMPLATES, STARTER_LOADOUT, WEAPONS_DB, getWeaponById } from '../src/data/sunbreakDb';
+import { COMMUNITY_ARCHETYPES } from '../src/data/communityArchetypes';
+import { CRAFTING_CATEGORY_MATERIALS, getArmorCraftingMaterials, getEquipmentProgression, getWeaponCraftingOptions } from '../src/data/mhriceAdapter';
+import { EMPTY_Q_ARMOR, EMPTY_Q_WEAPON } from '../src/data/quriousDefaults';
+import { ARMOR_DB, DECORATIONS_DB, META_BUILD_TEMPLATES, STARTER_LOADOUT, WEAPONS_DB, getDecorationById, getWeaponById } from '../src/data/sunbreakDb';
 import { createCraftingPlanner, recordCraftedItem, summarizeCraftingForecast } from '../src/engine/craftingPlanner';
-import { calculateBuildStats, decorationFits, DEFAULT_SIM_CONFIG, evaluateMetaRecommendations, getUnlockedIdsForRank, preferOwnedArmorVariants, RECOMMENDATION_TEMPLATES, resolveDecorationSlots, resolveWeaponSharpness, simulateTrainingDps } from '../src/engine/damageCalculator';
-import { optimizeTemplateTalisman } from '../src/engine/ownedBuildOptimizer';
-import { createDefaultInventory, DEFAULT_HUNTER_PROFILE, mergeImportedDecorations, mergeImportedEquipment, mergeSteamProfile, parseBuildsBackup, parseCharmOrInventoryPayload, partitionBuildsBackup } from '../src/utils/storageAndShare';
+import { calculateBuildStats, decorationFits, DEFAULT_SIM_CONFIG, evaluateMetaRecommendations, getUnlockedIdsForRank, preferOwnedArmorVariants, RECOMMENDATION_TEMPLATES, replaceBuildWeapon, resolveDecorationSlots, resolveWeaponSharpness, simulateTrainingDps } from '../src/engine/damageCalculator';
+import { optimizeTemplateTalisman, synthesizeOwnedBoxBuilds } from '../src/engine/ownedBuildOptimizer';
+import { createDefaultInventory, DEFAULT_HUNTER_PROFILE, mergeImportedDecorations, mergeImportedEquipment, mergeImportedMaterials, mergeImportedTalismans, mergeSteamProfile, parseBuildsBackup, parseCharmOrInventoryPayload, partitionBuildsBackup } from '../src/utils/storageAndShare';
 
 test('a damaged complete decoration export preserves the previous inventory', () => {
   const blaze = DECORATIONS_DB.find(item => item.name === 'Blaze Jewel 1');
@@ -302,4 +303,157 @@ test('rank-only unlocks exclude gated or unverified equipment', () => {
   assert.ok(unlocks.weaponIds.length > 0);
   assert.ok(!unlocks.weaponIds.includes(weapon.id));
   assert.ok(!unlocks.armorIds.includes(armor.id));
+});
+
+test('partial materials and talismans merge valid rows and preserve existing entries', () => {
+  const schema = 'elgado-forge-reframework-v1';
+  const parse = (fields: object) => parseCharmOrInventoryPayload(JSON.stringify({ schema, ...fields }));
+  const existing = parse({ talismans: [{ skill1: 'Attack Boost', skill1Level: 2, slots: [0, 2, 0, 0] }] });
+  assert.deepEqual(existing.talismans[0]?.slots, [2, 2, 0]);
+  const inventory = {
+    ...createDefaultInventory(),
+    materials: { 'Afflicted Claw': 5, 'Monster Hardbone': 4 },
+    talismans: existing.talismans,
+  };
+  const partial = parse({
+    materials: { 'Afflicted Claw': 'invalid', 'Monster Hardbone': '3', 'Large Elder Dragon Bone': null },
+    talismans: [
+      null,
+      { skill1: 'Attack Boost', skill1Level: 2, skill2: 'Invalid Skill', skill2Level: 1 },
+      { skill1: 'Wirebug Whisperer', skill1Level: 2, slots: [2, 1, 0] },
+    ],
+  });
+  assert.deepEqual(partial.materialImportIssues, ['Afflicted Claw', 'Large Elder Dragon Bone']);
+  assert.deepEqual(partial.talismanImportIssues, ['Talisman #1', 'Talisman #2']);
+  assert.deepEqual(mergeImportedMaterials(inventory, partial, true), { 'Afflicted Claw': 5, 'Monster Hardbone': 3 });
+  assert.deepEqual(mergeImportedTalismans(inventory, partial, true).merged.map(item => item.skill1Id),
+    ['wirebug_whisperer', 'attack_boost']);
+  const empty = parse({ materials: {}, talismans: [] });
+  assert.equal(Object.keys(mergeImportedMaterials(inventory, empty, true)).length, 0);
+  assert.deepEqual(mergeImportedTalismans(inventory, empty, true).merged, []);
+  const malformed = parse({ materials: [], talismans: {} });
+  assert.deepEqual(malformed.materialImportIssues, ['materials']);
+  assert.deepEqual(malformed.talismanImportIssues, ['talismans']);
+  assert.deepEqual(mergeImportedTalismans(inventory, malformed, true).merged, inventory.talismans);
+});
+
+test('Blood Awakening defaults to inactive and uses the healing and weapon tiers', () => {
+  const armor = ARMOR_DB.find(item => item.name === 'Primordial Mail');
+  const elemental = (weapon: (typeof WEAPONS_DB)[number]) =>
+    weapon.elementValue > 0 && ['Fire', 'Water', 'Thunder', 'Ice', 'Dragon'].includes(weapon.elementType);
+  const melee = WEAPONS_DB.find(item => item.weaponClass === 'Great Sword' && elemental(item));
+  const bow = WEAPONS_DB.find(item => item.weaponClass === 'Bow' && elemental(item));
+  assert.ok(armor && melee && bow);
+  for (const [weapon, firstTier, secondTier] of [[melee, 5, 10], [bow, 4, 8]] as const) {
+    const loadout = {
+      ...STARTER_LOADOUT, weaponId: weapon.id, weaponClass: weapon.weaponClass,
+      helmId: '', chestId: armor.id, armsId: '', waistId: '', legsId: '',
+      decorations: { weapon: [], helm: [], chest: [], arms: [], waist: [], legs: [], talisman: [] },
+      quriousWeapon: EMPTY_Q_WEAPON, quriousArmor: EMPTY_Q_ARMOR,
+      talisman: { ...STARTER_LOADOUT.talisman, skill1Id: '', skill1Level: 0, skill2Id: '', skill2Level: 0 },
+    };
+    const baseline = calculateBuildStats(loadout);
+    assert.equal(baseline.skills.blood_awakening, 1);
+    assert.ok(!baseline.activeEndgameEffects.some(effect => effect.startsWith('Blood Awakening')));
+    for (const [healing, bonus] of [[50, firstTier], [150, secondTier]] as const) {
+      const active = calculateBuildStats(loadout, { bloodAwakeningHealing: healing });
+      assert.equal(active.trueRaw - baseline.trueRaw, bonus);
+      assert.equal(active.trueElement - baseline.trueElement, bonus);
+    }
+  }
+});
+
+test('weapon changes reset weapon augments and remove class-incompatible Rampage decorations', () => {
+  const previous = WEAPONS_DB.find(item => item.weaponClass === 'Bow' && item.rampageSlot >= 2);
+  const next = WEAPONS_DB.find(item => item.name === 'Kamura H. Bowgun V');
+  const arcJewel = DECORATIONS_DB.find(item => item.isRampage && item.rampageWeaponClasses?.includes('Bow')
+    && !item.rampageWeaponClasses.includes('Heavy Bowgun'));
+  assert.ok(previous && next && arcJewel);
+  const loadout = {
+    ...STARTER_LOADOUT, weaponId: previous.id, weaponClass: previous.weaponClass,
+    quriousWeapon: { ...EMPTY_Q_WEAPON, attackLevel: 2 },
+    rampageDecoId: arcJewel.id,
+    decorations: { ...STARTER_LOADOUT.decorations, weapon: [DECORATIONS_DB[0].id] },
+  };
+  const switched = replaceBuildWeapon(loadout, next);
+  assert.equal(switched.weaponClass, 'Heavy Bowgun');
+  assert.equal(switched.weaponId, next.id);
+  assert.deepEqual(switched.quriousWeapon, EMPTY_Q_WEAPON);
+  assert.equal(switched.rampageDecoId, '');
+  assert.deepEqual(switched.decorations.weapon, ['', '', '']);
+  assert.equal(switched.decorations.chest, loadout.decorations.chest);
+  assert.equal(replaceBuildWeapon(loadout, previous), loadout);
+});
+
+test('Craftable Now excludes locked recipes while retaining them in the forecast', () => {
+  const armor = ARMOR_DB.find(item => item.name === 'Valstrax Helm - Epoch');
+  assert.ok(armor);
+  const materials = getArmorCraftingMaterials(armor.id);
+  assert.ok(materials?.length);
+  const inventory = {
+    ...createDefaultInventory(),
+    materials: Object.fromEntries(materials.map(material => [material.name, material.count])),
+  };
+  const locked = createCraftingPlanner(inventory, 10, 0);
+  assert.equal(locked.reserve(armor.id, 'armor'), undefined);
+  const forecast = summarizeCraftingForecast(locked, [{ itemId: armor.id, slotLabel: 'Helm', missingCopies: 1 }]);
+  assert.ok(forecast.steps.has(armor.id));
+  assert.equal(forecast.missingMaterials.size, 0);
+  assert.ok(createCraftingPlanner(inventory, 160, 0).reserve(armor.id, 'armor'));
+});
+
+test('Heaven-Sent archetypes require the full Tempest breakpoint and keep lower-level jewels eligible in level 4 slots', () => {
+  const weaponNames = ['Torci Da Lavater', "Duke's Scepter", "Royal Order's Axe", 'Defender Dual Blades I', 'Defender Bow I'];
+  const armorNames = ['Tempest Robe', 'Tempest Sleeves', 'Tempest Hakama', 'Chainmail Headgear', 'Leather Belt'];
+  const jewelNames = ['Tenderizer Jewel 2', 'Physique Jewel 2', 'Forceshot Jewel 3', 'Pierce Jewel 3', 'Spread Jewel 3',
+    'Artillery Jewel 2', 'Magazine Jewel 2', 'Quickswitch Jewel 2'];
+  const weapons = WEAPONS_DB.filter(weapon => weaponNames.includes(weapon.name));
+  const armor = ARMOR_DB.filter(piece => piece.isSelectable !== false && armorNames.includes(piece.name));
+  const jewels = DECORATIONS_DB.filter(deco => jewelNames.includes(deco.name));
+  assert.equal(weapons.length, weaponNames.length);
+  assert.equal(armor.length, armorNames.length);
+  assert.equal(jewels.length, jewelNames.length);
+
+  const inventory = {
+    ...createDefaultInventory(),
+    ownedWeaponIds: weapons.map(weapon => weapon.id),
+    ownedArmorIds: armor.map(piece => piece.id),
+    ownedDecoIds: jewels.map(deco => deco.id),
+    ownedDecoCounts: Object.fromEntries(jewels.map(deco => [deco.id, 5])),
+    talismans: [],
+  };
+  const archetypes = COMMUNITY_ARCHETYPES.filter(item => item.requiresHeavenSent3);
+  assert.equal(archetypes.length, 5);
+  for (const archetype of archetypes) {
+    const options = { weaponClassFilter: archetype.weaponClass, maxBuilds: 1 };
+    const normal = synthesizeOwnedBoxBuilds(inventory, options).builds[0];
+    const dedicated = synthesizeOwnedBoxBuilds(inventory, {
+      ...options, constraints: { communityArchetypeId: archetype.id },
+    }).builds[0];
+    assert.equal(normal?.stats.skills.heaven_sent, 3, archetype.weaponClass);
+    assert.equal(dedicated?.stats.skills.heaven_sent, 3, archetype.weaponClass);
+    assert.ok(dedicated.title.includes('Heaven-Sent 3'));
+    assert.deepEqual([dedicated.loadout.chestId, dedicated.loadout.armsId, dedicated.loadout.legsId],
+      armorNames.slice(0, 3).map(name => armor.find(piece => piece.name === name)?.id));
+    if (archetype.weaponClass === 'Bow') {
+      const slots = resolveDecorationSlots(dedicated.loadout);
+      const fittedLevels = Object.entries(dedicated.loadout.decorations).flatMap(([slot, ids]) =>
+        ids.flatMap((id, index) => id && slots[slot as keyof typeof slots][index] === 4
+          ? [getDecorationById(id)?.slotLevel]
+          : []));
+      assert.ok(fittedLevels.includes(2) && fittedLevels.includes(3));
+      assert.equal(dedicated.stats.skills.constitution ?? 0, 0);
+    }
+  }
+
+  const replacement = ARMOR_DB.find(piece => piece.slot === 'Legs' && piece.isSelectable !== false && !piece.skills.heaven_sent);
+  const hakama = armor.find(piece => piece.name === 'Tempest Hakama');
+  const bowArchetype = archetypes.find(item => item.weaponClass === 'Bow');
+  assert.ok(replacement && hakama && bowArchetype);
+  const incomplete = {
+    ...inventory, ownedArmorIds: [...inventory.ownedArmorIds.filter(id => id !== hakama.id), replacement.id],
+  };
+  assert.equal(synthesizeOwnedBoxBuilds(incomplete, {
+    weaponClassFilter: 'Bow', constraints: { communityArchetypeId: bowArchetype.id },
+  }).builds.length, 0);
 });

@@ -4,10 +4,12 @@ import {
   getArmorCraftingMaterials,
   getDecorationCraftingMaterials,
   getEquipmentCraftingZenny,
+  getEquipmentProgression,
   getMinimumCraftingMr,
   getRampageCraftingCategory,
   getWeaponCraftingOptions,
 } from '../data/mhriceAdapter';
+import { getArmorById, getDecorationById, getWeaponById } from '../data/sunbreakDb';
 import type { InventoryState } from '../types/sunbreak';
 
 export function getAnomalyFarmOptions(material: string, researchLevel: number) {
@@ -47,7 +49,7 @@ type CraftingStep = {
   prerequisite?: CraftingStep;
 };
 
-export function createCraftingPlanner(inventory: InventoryState, mr: number) {
+export function createCraftingPlanner(inventory: InventoryState, mr: number, ar = 0) {
   const ownedWeapons = new Set(inventory.ownedWeaponIds);
   const materials = new Map<string, number>();
   const key = (name: string) => name.trim().toLowerCase();
@@ -56,10 +58,21 @@ export function createCraftingPlanner(inventory: InventoryState, mr: number) {
   }
   const recipes = new Map<string, Recipe[]>();
 
+  function progression(id: string, kind: ItemKind) {
+    const item = kind === 'weapon' ? getWeaponById(id)
+      : kind === 'armor' ? getArmorById(id)
+      : getDecorationById(id);
+    return item ? getEquipmentProgression(item, mr, ar, inventory.materials) : 'unverified';
+  }
+
   function getRecipes(id: string, kind: ItemKind, forecast = false): Recipe[] {
     const cacheKey = `${id}:${forecast}`;
     const cached = recipes.get(cacheKey);
     if (cached) return cached;
+    if (!forecast && progression(id, kind) === 'locked') {
+      recipes.set(cacheKey, []);
+      return [];
+    }
     let options: Recipe[];
     if (kind === 'weapon') {
       options = getWeaponCraftingOptions(id).filter(recipe => forecast || (recipe.minMr <= mr
@@ -201,6 +214,7 @@ export function createCraftingPlanner(inventory: InventoryState, mr: number) {
 
   return {
     reserve,
+    progression,
     plan: (pieces: Piece[]) => collect(pieces, false),
     forecast: (pieces: Piece[]) => collect(pieces, false) ?? collect(pieces, true)!,
   };

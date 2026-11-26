@@ -261,6 +261,7 @@ export interface SimulationConfig {
   derelictionQurio: 1 | 2 | 3;
   frostcraftGauge: 0 | 1 | 2 | 3;
   burstActive: boolean;
+  bloodAwakeningHealing?: 0 | 50 | 150;
   coalescenceActive: boolean;
   powercharmTalon: boolean;
   armorcharmTalon?: boolean;

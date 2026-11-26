@@ -472,9 +472,9 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
           </div>
           {showCustomSection && archetype && (
             <div className="space-y-1 text-xs text-[#98A2B3]">
-              <p>Endgame guide · {archetype.note} Results use your selected inventory mode and locks.</p>
+              <p>{archetype.note} Results use your selected inventory mode and locks.</p>
               <div className="flex flex-wrap gap-3 text-[#D4A853]">
-                <a href={archetype.source} target="_blank" rel="noreferrer">Weapon guide</a>
+                <a href={archetype.source} target="_blank" rel="noreferrer">{archetype.requiresHeavenSent3 ? 'Skill details' : 'Weapon guide'}</a>
                 <a href={SUNBREAK_META_INDEX} target="_blank" rel="noreferrer">Sunbreak Megathread</a>
                 <a href={SUNBREAK_SOLO_PROGRESSION} target="_blank" rel="noreferrer">Solo Endgame Progression</a>
                 <a href={GAMECAT_SET_SEARCH} target="_blank" rel="noreferrer">Open GameCat</a>
@@ -633,7 +633,9 @@ export const OwnedRecommendationsView: React.FC<OwnedRecommendationsViewProps> =
                   : 'No Matching Weapon Class Found in Your Owned Box'}
               </h3>
               <p className="text-xs leading-relaxed text-[#98A2B3] max-w-2xl">
-                {archetype
+                {archetype?.requiresHeavenSent3
+                  ? 'A full set needs Tempest Robe, Tempest Sleeves, and Tempest Hakama in your selected inventory mode. Check your weapon and equipment locks.'
+                  : archetype
                   ? 'Check the weapon requirements, equipment locks, and whether Craftable Now can expand your options.'
                   : craftableNow
                   ? 'Try another weapon class or sync your latest equipment and materials.'

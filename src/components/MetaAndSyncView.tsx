@@ -51,6 +51,8 @@ import {
   mergeUniqueTalismans,
   mergeImportedDecorations,
   mergeImportedEquipment,
+  mergeImportedMaterials,
+  mergeImportedTalismans,
   getTalismanSignature,
   mergeSteamProfile,
   parseBuildsBackup,
@@ -123,7 +125,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
     replace: boolean;
     decorationCountsIncomplete: boolean;
     decorationImportIssues: string[];
-    equipmentImportIssues: Array<{ label: string; rows: string[] }>;
+    protectedImportGroups: Array<{ label: string; rows: string[] }>;
     groups: Array<{ name: string; changes: string[] }>;
   }>();
   const [importError, setImportError] = useState('');
@@ -159,6 +161,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
   const [dbRank, setDbRank] = useState('');
   const [dbSpecies, setDbSpecies] = useState('');
   const [dbLastSynced, setDbLastSynced] = useState<string | null>(null);
+  const [dbSyncError, setDbSyncError] = useState('');
   const [dbSyncing, setDbSyncing] = useState(false);
   const [dbResults, setDbResults] = useState<Record<string, unknown>[]>([]);
 
@@ -299,7 +302,10 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
         !parsed.hasWeaponsField &&
         !parsed.hasArmorField &&
         !parsed.hasDecosField &&
-        !parsed.hasTalismansField
+        !parsed.hasTalismansField &&
+        !parsed.replaceMaterials &&
+        !parsed.materialImportIssues.length &&
+        !parsed.talismanImportIssues.length
       ) {
         setImportError(
           'No valid REFramework export, charms, materials, or equipment detected. Use elgado_forge_export.json or charm CSV.'
@@ -324,11 +330,9 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
       const { ownedDecoIds: nextDecos, ownedDecoCounts: nextDecoCounts } =
         mergeImportedDecorations(inventory, parsed, shouldReplace);
 
-      const { merged: mergedTalismans, addedCount: addedTalismans } = shouldReplace
-        ? parsed.hasTalismansField
-          ? mergeUniqueTalismans([], parsed.talismans)
-          : { merged: existingRealTalismans, addedCount: 0 }
-        : mergeUniqueTalismans(existingRealTalismans, parsed.talismans);
+      const replaceTalismans = shouldReplace && parsed.hasTalismansField && !parsed.talismanImportIssues.length;
+      const { merged: mergedTalismans, addedCount: addedTalismans } =
+        mergeImportedTalismans(inventory, parsed, shouldReplace);
 
       const newWeaponCount = nextWeapons.filter((id) => !prevWeapons.has(id)).length;
       const newArmorCount = nextArmor.filter((id) => !prevArmor.has(id)).length;
@@ -341,12 +345,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
         ownedArmorIds: nextArmor,
         ownedDecoIds: nextDecos,
         ownedDecoCounts: nextDecoCounts,
-        materials: replaceMaterials
-          ? parsed.materials
-          : {
-              ...inventory.materials,
-              ...parsed.materials,
-            },
+        materials: mergeImportedMaterials(inventory, parsed, shouldReplace),
         lastInventorySyncAt: new Date().toISOString(),
       };
 
@@ -378,9 +377,11 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
           raw: rawPayload, inventory, profile, replace: replaceBoxOnImport, groups,
           decorationCountsIncomplete: parsed.isReFrameworkSnapshot && !parsed.decorationCountsComplete,
           decorationImportIssues: parsed.decorationImportIssues,
-          equipmentImportIssues: [
+          protectedImportGroups: [
             { label: 'Weapons', rows: parsed.weaponImportIssues },
             { label: 'Armor', rows: parsed.armorImportIssues },
+            { label: 'Materials', rows: parsed.materialImportIssues },
+            { label: 'Talismans', rows: parsed.talismanImportIssues },
           ].filter(group => group.rows.length > 0),
         });
         setImportUnmatched(parsed.stats.unmatchedItems);
@@ -400,7 +401,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
       }
 
       const parts: string[] = [];
-      if (matCount > 0) {
+      if (matCount > 0 || replaceMaterials) {
         parts.push(
           replaceMaterials
             ? `${matCount} materials replaced`
@@ -409,7 +410,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
       }
       if (parsed.hasTalismansField || parsed.talismans.length > 0) {
         parts.push(
-          shouldReplace
+          replaceTalismans
             ? `${mergedTalismans.length} charm(s) synced`
             : addedTalismans > 0
             ? `+${addedTalismans} new charm(s)`
@@ -558,12 +559,15 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
 
   const handleRefreshDatabase = async () => {
     setDbSyncing(true);
+    setDbSyncError('');
     try {
       const res = await fetch('/api/database/sync', { method: 'POST' });
       const data = await res.json();
-      if (data?.ok) {
-        setDbLastSynced(data.lastSyncedAt);
-      }
+      if (!res.ok || !data?.ok) throw new Error(data?.error || 'Catalog verification failed.');
+      setDbLastSynced(data.lastSyncedAt);
+    } catch (error) {
+      setDbLastSynced(null);
+      setDbSyncError(error instanceof Error ? error.message : 'Catalog verification failed.');
     } finally {
       setDbSyncing(false);
     }
@@ -1403,9 +1407,9 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
                       </ul>
                     </details>
                   )}
-                  {importPreview.equipmentImportIssues.map(({ label, rows }) => (
+                  {importPreview.protectedImportGroups.map(({ label, rows }) => (
                     <details key={label} className="text-amber-400">
-                      <summary className="cursor-pointer">{label} · {rows.length} unreadable rows. Existing equipment will be kept.</summary>
+                      <summary className="cursor-pointer">{label} · {rows.length} unreadable entries. Valid entries will be merged with your existing inventory.</summary>
                       <ul className="mt-1 max-h-32 overflow-auto">
                         {rows.map(row => <li key={row}>{row}</li>)}
                       </ul>
@@ -2051,6 +2055,7 @@ export const MetaAndSyncView: React.FC<MetaAndSyncViewProps> = ({
             </div>
           </div>
 
+          {dbSyncError && <p role="alert" className="text-xs text-rose-300">{dbSyncError}</p>}
           {dbLastSynced && (
             <p className="text-xs text-emerald-400">
               Catalog Sunbreak TU6 (Ver.16) verified at{' '}

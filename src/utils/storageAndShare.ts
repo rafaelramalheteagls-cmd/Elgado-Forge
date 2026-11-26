@@ -590,6 +590,8 @@ export function mergeUniqueTalismans(
 export interface ParsedSyncPayload {
   isReFrameworkSnapshot: boolean;
   replaceMaterials: boolean;
+  materialImportIssues: string[];
+  talismanImportIssues: string[];
   hasWeaponsField: boolean;
   hasArmorField: boolean;
   hasDecosField: boolean;
@@ -645,10 +647,32 @@ export function mergeImportedEquipment(inventory: InventoryState, parsed: Parsed
   };
 }
 
+export function mergeImportedMaterials(inventory: InventoryState, parsed: ParsedSyncPayload, replaceBox: boolean) {
+  return replaceBox && parsed.replaceMaterials
+    ? parsed.materials
+    : { ...inventory.materials, ...parsed.materials };
+}
+
+export function mergeImportedTalismans(inventory: InventoryState, parsed: ParsedSyncPayload, replaceBox: boolean) {
+  const existing = replaceBox && parsed.hasTalismansField && !parsed.talismanImportIssues.length
+    ? []
+    : inventory.talismans.filter(talisman => talisman.source !== 'Preset');
+  return mergeUniqueTalismans(existing, parsed.talismans);
+}
+
+function readImportInteger(value: unknown, min: number, max: number): number | undefined {
+  const number = typeof value === 'string' && value.trim() ? Number(value) : value;
+  return typeof number === 'number' && Number.isSafeInteger(number) && number >= min && number <= max
+    ? number
+    : undefined;
+}
+
 export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload {
   const emptyResult: ParsedSyncPayload = {
     isReFrameworkSnapshot: false,
     replaceMaterials: false,
+    materialImportIssues: [],
+    talismanImportIssues: [],
     hasWeaponsField: false,
     hasArmorField: false,
     hasDecosField: false,
@@ -688,21 +712,41 @@ export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload
         Array.isArray(parsed.decorations));
 
     const talismans: TalismanItem[] = [];
+    const talismanImportIssues: string[] = [];
+    if (!Array.isArray(parsed) && 'talismans' in parsed && !Array.isArray(parsed.talismans)) {
+      talismanImportIssues.push('talismans');
+    }
     const list = Array.isArray(parsed)
       ? parsed
       : Array.isArray(parsed.talismans)
       ? parsed.talismans
       : [];
 
-    list.forEach((entry: Record<string, unknown>, idx: number) => {
+    list.forEach((row: unknown, idx: number) => {
+      const label = `Talisman #${idx + 1}`;
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        talismanImportIssues.push(label);
+        return;
+      }
+      const entry = row as Record<string, unknown>;
       const s1 = matchSkillId(String(entry.skill1Id ?? entry.skill1 ?? ''));
       const s2 = matchSkillId(String(entry.skill2Id ?? entry.skill2 ?? ''));
-      const l1 = Math.max(0, Math.min(4, Number(entry.skill1Level ?? entry.level1 ?? 0)));
-      const l2 = Math.max(0, Math.min(4, Number(entry.skill2Level ?? entry.level2 ?? 0)));
+      const l1 = readImportInteger(entry.skill1Level ?? entry.level1, 1, 4);
+      const l2 = readImportInteger(entry.skill2Level ?? entry.level2 ?? 0, 0, 4);
+      const rawSlots = Array.isArray(entry.slots)
+        ? entry.slots
+        : [entry.slot1 ?? 0, entry.slot2 ?? 0, entry.slot3 ?? 0];
+      const slots = rawSlots.map(value => readImportInteger(value, 0, 4));
+      if (!s1 || l1 === undefined || l2 === undefined || (l2 > 0 && !s2)
+        || (entry.slots != null && !Array.isArray(entry.slots)) || slots.length > 4
+        || slots.some(value => value === undefined)) {
+        talismanImportIssues.push(label);
+        return;
+      }
 
       let slotsTuple: [number, number, number];
+      const nums = slots.map(value => value ?? 0);
       if (Array.isArray(entry.slots)) {
-        const nums = entry.slots.map((n) => Math.max(0, Math.min(4, Math.floor(Number(n) || 0))));
         // Handle MHRise [lv1_count, lv2_count, lv3_count, lv4_count] vectors
         // including legacy 3-element exports like [0, 2, 0] or [0, 2, 1].
         const isCountVector =
@@ -711,6 +755,10 @@ export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload
             nums[0] === 0 &&
             ((nums[1] ?? 0) > 0 || (nums[2] ?? 0) > 0));
         if (isCountVector) {
+          if (nums.reduce((sum, count) => sum + count, 0) > 3) {
+            talismanImportIssues.push(label);
+            return;
+          }
           const expanded: number[] = [];
           for (let lv = Math.min(4, nums.length); lv >= 1; lv--) {
             const cnt = nums[lv - 1] ?? 0;
@@ -723,11 +771,7 @@ export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload
           slotsTuple = [nums[0] ?? 0, nums[1] ?? 0, nums[2] ?? 0];
         }
       } else {
-        slotsTuple = [
-          Math.max(0, Math.min(4, Number(entry.slot1 ?? 0))),
-          Math.max(0, Math.min(4, Number(entry.slot2 ?? 0))),
-          Math.max(0, Math.min(4, Number(entry.slot3 ?? 0))),
-        ];
+        slotsTuple = [nums[0], nums[1], nums[2]];
       }
 
       if (s1 && l1 > 0) {
@@ -742,7 +786,7 @@ export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload
           name: String(entry.name ?? defaultName),
           skill1Id: s1,
           skill1Level: l1,
-          skill2Id: s2,
+          skill2Id: l2 > 0 ? s2 : '',
           skill2Level: l2,
           slots: slotsTuple,
           source: 'Imported',
@@ -750,20 +794,23 @@ export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload
       }
     });
 
-    const materials: Record<string, number> = {};
+    const materials: Record<string, number> = Object.create(null);
+    const materialImportIssues: string[] = [];
     let matchedCatalogMaterials = 0;
     const unmatchedItems: string[] = [];
 
-    if (
-      !Array.isArray(parsed) &&
-      parsed.materials &&
-      typeof parsed.materials === 'object' &&
-      !Array.isArray(parsed.materials)
-    ) {
+    const hasMaterialsField = !Array.isArray(parsed) && 'materials' in parsed;
+    const hasMaterialMap = hasMaterialsField && parsed.materials !== null
+      && typeof parsed.materials === 'object' && !Array.isArray(parsed.materials);
+    if (hasMaterialsField && !hasMaterialMap) materialImportIssues.push('materials');
+    if (hasMaterialMap) {
       for (const [rawKey, rawVal] of Object.entries(parsed.materials as Record<string, unknown>)) {
         const cleanName = rawKey.trim();
-        const qty = Math.max(0, Math.min(9999, Math.floor(Number(rawVal) || 0)));
-        if (!cleanName || qty <= 0) continue;
+        const qty = readImportInteger(rawVal, 0, 9999);
+        if (!cleanName || qty === undefined) {
+          materialImportIssues.push(cleanName || 'Unnamed material');
+          continue;
+        }
 
         const canonical = MATERIAL_LOOKUP.get(materialLookupKey(cleanName));
         if (canonical) {
@@ -983,9 +1030,9 @@ export function parseCharmOrInventoryPayload(rawText: string): ParsedSyncPayload
 
     return {
       isReFrameworkSnapshot: isRefSnapshot,
-      replaceMaterials:
-        !Array.isArray(parsed) &&
-        Boolean(parsed.materials && typeof parsed.materials === 'object' && !Array.isArray(parsed.materials)),
+      replaceMaterials: hasMaterialMap && materialImportIssues.length === 0,
+      materialImportIssues,
+      talismanImportIssues,
       hasWeaponsField,
       hasArmorField,
       hasDecosField,
